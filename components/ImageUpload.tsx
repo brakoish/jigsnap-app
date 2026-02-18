@@ -74,13 +74,13 @@ export default function ImageUpload({ onImageUpload, currentImage, onRetake }: I
 
   return (
     <div className="flex flex-col gap-4">
-      {/* Upload from library - uses label wrapping input for maximum iOS compatibility */}
-      <label
+      {/* Upload from library */}
+      <div
         onDrop={handleDrop}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         className={`
-          relative border-2 border-dashed rounded-xl p-12 cursor-pointer
+          relative border-2 border-dashed rounded-xl p-12
           transition-all duration-200 ease-in-out
           flex flex-col items-center justify-center gap-4
           min-h-[240px]
@@ -99,27 +99,30 @@ export default function ImageUpload({ onImageUpload, currentImage, onRetake }: I
         
         <div className="text-center">
           <p className="text-zinc-300 font-medium">
-            Tap to upload a photo
+            Upload a photo
           </p>
           <p className="text-zinc-500 text-sm mt-1">
             JPG, PNG — or drag &amp; drop on desktop
           </p>
         </div>
 
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/*"
-          onChange={handleFileInput}
-          className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-        />
+        <label className="mt-2 px-6 py-3 bg-zinc-700 hover:bg-zinc-600 text-zinc-200 rounded-lg transition-colors cursor-pointer font-medium text-sm">
+          Choose File
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            onChange={handleFileInput}
+            className="hidden"
+          />
+        </label>
 
         {isDragging && (
           <div className="absolute inset-0 rounded-xl border-2 border-cyan-400 animate-pulse pointer-events-none" />
         )}
-      </label>
+      </div>
 
-      {/* Take Photo button — uses label with capture attribute for direct camera access on mobile */}
+      {/* Take Photo button */}
       <label className="flex items-center justify-center gap-2 px-6 py-3 
                    bg-cyan-700 hover:bg-cyan-600 text-white 
                    rounded-lg transition-colors border border-cyan-600 cursor-pointer">
