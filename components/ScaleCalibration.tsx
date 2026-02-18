@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { Ruler, Check, AlertCircle } from 'lucide-react';
 import type { A4Paper, ScaleCalibration, JigConfig } from '@/lib/types';
 import { calculatePixelsPerMm } from '@/lib/paper-detect';
+import { computeSquareJigSizeMm } from '@/lib/jig-utils';
 
 interface ScaleCalibrationProps {
   a4Paper: A4Paper | null;
@@ -11,9 +12,6 @@ interface ScaleCalibrationProps {
   onCalibrationChange: (calibration: ScaleCalibration) => void;
   onConfigChange: (config: JigConfig) => void;
 }
-
-const A4_WIDTH_MM = 210;
-const A4_HEIGHT_MM = 297;
 
 export default function ScaleCalibration({
   a4Paper,
@@ -24,12 +22,10 @@ export default function ScaleCalibration({
   const [useManual, setUseManual] = useState(!a4Paper);
   const [manualPixelsPerMm, setManualPixelsPerMm] = useState(10);
   const [manualReference, setManualReference] = useState({ lengthPx: 100, lengthMm: 10 });
-  
-  const [config, setConfig] = useState<JigConfig>({
-    paddingMm: 10,
-    thicknessMm: 5,
-    pocketDepthMm: null // Through-cut by default
-  });
+  const [extrudeHeightMm, setExtrudeHeightMm] = useState(6);
+
+  const autoPxPerMm = a4Paper ? calculatePixelsPerMm(a4Paper) : null;
+  const activePxPerMm = useManual ? manualPixelsPerMm : (autoPxPerMm ?? manualPixelsPerMm);
 
   // Calculate auto calibration from A4
   useEffect(() => {
@@ -55,25 +51,23 @@ export default function ScaleCalibration({
     }
   }, [useManual, manualReference, onCalibrationChange]);
 
-  // Notify config changes
+  // Compute square jig size and notify config changes
   useEffect(() => {
-    onConfigChange(config);
-  }, [config, onConfigChange]);
+    if (contourBounds && activePxPerMm > 0) {
+      const jigSizeMm = computeSquareJigSizeMm(contourBounds, activePxPerMm);
+      onConfigChange({ extrudeHeightMm, jigSizeMm });
+    }
+  }, [contourBounds, activePxPerMm, extrudeHeightMm, onConfigChange]);
 
-  const updateConfig = (key: keyof JigConfig, value: number | null) => {
-    setConfig(prev => ({ ...prev, [key]: value }));
-  };
-
-  const autoPxPerMm = a4Paper ? calculatePixelsPerMm(a4Paper) : null;
-  
   // Calculate object dimensions
-  const objectDimensions = contourBounds && autoPxPerMm ? {
-    width: (contourBounds.width / autoPxPerMm).toFixed(1),
-    height: (contourBounds.height / autoPxPerMm).toFixed(1)
-  } : contourBounds && useManual ? {
-    width: (contourBounds.width / manualPixelsPerMm).toFixed(1),
-    height: (contourBounds.height / manualPixelsPerMm).toFixed(1)
+  const objectDimensions = contourBounds && activePxPerMm > 0 ? {
+    width: (contourBounds.width / activePxPerMm).toFixed(1),
+    height: (contourBounds.height / activePxPerMm).toFixed(1)
   } : null;
+
+  const jigSizeMm = contourBounds && activePxPerMm > 0
+    ? computeSquareJigSizeMm(contourBounds, activePxPerMm)
+    : null;
 
   return (
     <div className="flex flex-col gap-6">
@@ -194,61 +188,33 @@ export default function ScaleCalibration({
       <div className="space-y-4 p-4 bg-zinc-800/30 border border-zinc-700 rounded-lg">
         <h4 className="text-sm font-medium text-zinc-300">Jig Settings</h4>
         
-        {/* Padding */}
+        {/* Computed square jig size */}
+        {jigSizeMm && (
+          <div className="flex justify-between text-sm">
+            <span className="text-zinc-400">Square jig size</span>
+            <span className="text-cyan-400 font-medium">{jigSizeMm} × {jigSizeMm} mm</span>
+          </div>
+        )}
+
+        {/* Extrude Height */}
         <div className="space-y-2">
           <div className="flex justify-between text-sm">
-            <span className="text-zinc-400">Padding around object</span>
-            <span className="text-zinc-500">{config.paddingMm} mm</span>
+            <span className="text-zinc-400">Extrude Height</span>
+            <span className="text-zinc-500">{extrudeHeightMm} mm</span>
           </div>
           <input
             type="range"
             min="2"
-            max="30"
-            value={config.paddingMm}
-            onChange={(e) => updateConfig('paddingMm', parseInt(e.target.value))}
+            max="20"
+            value={extrudeHeightMm}
+            onChange={(e) => setExtrudeHeightMm(parseInt(e.target.value))}
             className="w-full accent-cyan-500"
           />
         </div>
 
-        {/* Thickness */}
-        <div className="space-y-2">
-          <div className="flex justify-between text-sm">
-            <span className="text-zinc-400">Jig thickness</span>
-            <span className="text-zinc-500">{config.thicknessMm} mm</span>
-          </div>
-          <input
-            type="range"
-            min="2"
-            max="15"
-            value={config.thicknessMm}
-            onChange={(e) => updateConfig('thicknessMm', parseInt(e.target.value))}
-            className="w-full accent-cyan-500"
-          />
-        </div>
-
-        {/* Pocket Depth */}
-        <div className="space-y-2">
-          <div className="flex justify-between text-sm">
-            <span className="text-zinc-400">Pocket depth</span>
-            <span className="text-zinc-500">
-              {config.pocketDepthMm === null ? 'Through-cut' : `${config.pocketDepthMm} mm`}
-            </span>
-          </div>
-          <input
-            type="range"
-            min="0"
-            max={config.thicknessMm}
-            value={config.pocketDepthMm ?? config.thicknessMm}
-            onChange={(e) => {
-              const val = parseInt(e.target.value);
-              updateConfig('pocketDepthMm', val >= config.thicknessMm ? null : val);
-            }}
-            className="w-full accent-cyan-500"
-          />
-          <p className="text-xs text-zinc-500">
-            Set to max for through-cut, or less for a pocket
-          </p>
-        </div>
+        <p className="text-xs text-zinc-500">
+          Cutout goes all the way through (through-cut)
+        </p>
       </div>
 
       {!a4Paper && !useManual && (

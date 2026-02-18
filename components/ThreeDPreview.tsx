@@ -30,11 +30,9 @@ export default function ThreeDPreview({
   useEffect(() => {
     if (!containerRef.current) return;
 
-    // Setup scene
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x18181b); // zinc-900
+    scene.background = new THREE.Color(0x18181b);
 
-    // Setup camera
     const camera = new THREE.PerspectiveCamera(
       45,
       containerRef.current.clientWidth / containerRef.current.clientHeight,
@@ -43,18 +41,15 @@ export default function ThreeDPreview({
     );
     camera.position.set(0, 0, 100);
 
-    // Setup renderer
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(containerRef.current.clientWidth, containerRef.current.clientHeight);
     renderer.shadowMap.enabled = true;
     containerRef.current.appendChild(renderer.domElement);
 
-    // Setup controls
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.05;
 
-    // Add lights
     const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
     scene.add(ambientLight);
 
@@ -63,14 +58,12 @@ export default function ThreeDPreview({
     directionalLight.castShadow = true;
     scene.add(directionalLight);
 
-    const backLight = new THREE.DirectionalLight(0x06b6d4, 0.3); // cyan accent
+    const backLight = new THREE.DirectionalLight(0x06b6d4, 0.3);
     backLight.position.set(-10, 5, -10);
     scene.add(backLight);
 
-    // Store refs
     sceneRef.current = { scene, camera, renderer, controls, mesh: null };
 
-    // Animation loop
     const animate = () => {
       requestAnimationFrame(animate);
       controls.update();
@@ -78,7 +71,6 @@ export default function ThreeDPreview({
     };
     animate();
 
-    // Handle resize
     const handleResize = () => {
       if (!containerRef.current || !sceneRef.current) return;
       const { camera, renderer } = sceneRef.current;
@@ -100,34 +92,30 @@ export default function ThreeDPreview({
     if (!sceneRef.current) return;
     const { scene, mesh: oldMesh } = sceneRef.current;
 
-    // Remove old mesh
     if (oldMesh) {
       scene.remove(oldMesh);
       oldMesh.geometry.dispose();
       (oldMesh.material as THREE.Material).dispose();
     }
 
-    // Calculate dimensions
-    const jigWidth = contourBounds.width / pixelsPerMm + config.paddingMm * 2;
-    const jigHeight = contourBounds.height / pixelsPerMm + config.paddingMm * 2;
+    const jigSize = config.jigSizeMm;
     const centerX = contour.points.reduce((sum, p) => sum + p.x, 0) / contour.points.length;
     const centerY = contour.points.reduce((sum, p) => sum + p.y, 0) / contour.points.length;
 
-    // Create outer shape
+    // Create outer shape (square)
     const outerShape = new THREE.Shape();
-    const halfW = jigWidth / 2;
-    const halfH = jigHeight / 2;
-    outerShape.moveTo(-halfW, -halfH);
-    outerShape.lineTo(halfW, -halfH);
-    outerShape.lineTo(halfW, halfH);
-    outerShape.lineTo(-halfW, halfH);
+    const half = jigSize / 2;
+    outerShape.moveTo(-half, -half);
+    outerShape.lineTo(half, -half);
+    outerShape.lineTo(half, half);
+    outerShape.lineTo(-half, half);
     outerShape.closePath();
 
-    // Create contour hole
+    // Create contour hole (through-cut)
     const holePath = new THREE.Path();
     contour.points.forEach((p, i) => {
       const mmX = (p.x - centerX) / pixelsPerMm;
-      const mmY = -(p.y - centerY) / pixelsPerMm; // Flip Y for 3D
+      const mmY = -(p.y - centerY) / pixelsPerMm;
       if (i === 0) {
         holePath.moveTo(mmX, mmY);
       } else {
@@ -137,32 +125,27 @@ export default function ThreeDPreview({
     holePath.closePath();
     outerShape.holes.push(holePath);
 
-    // Create geometry
     const geometry = new THREE.ExtrudeGeometry(outerShape, {
-      depth: config.thicknessMm,
+      depth: config.extrudeHeightMm,
       bevelEnabled: false,
       curveSegments: 32
     });
 
-    // Center geometry
-    geometry.translate(0, 0, -config.thicknessMm / 2);
+    geometry.translate(0, 0, -config.extrudeHeightMm / 2);
 
-    // Create material
     const material = new THREE.MeshStandardMaterial({
-      color: 0x3f3f46, // zinc-700
+      color: 0x3f3f46,
       roughness: 0.4,
       metalness: 0.3
     });
 
-    // Create mesh
     const mesh = new THREE.Mesh(geometry, material);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     
-    // Add wireframe overlay
     const wireframeGeometry = new THREE.WireframeGeometry(geometry);
     const wireframeMaterial = new THREE.LineBasicMaterial({ 
-      color: 0x06b6d4, // cyan-500
+      color: 0x06b6d4,
       transparent: true,
       opacity: 0.3
     });
@@ -172,8 +155,7 @@ export default function ThreeDPreview({
     scene.add(mesh);
     sceneRef.current.mesh = mesh;
 
-    // Adjust camera to fit
-    const maxDim = Math.max(jigWidth, jigHeight, config.thicknessMm);
+    const maxDim = Math.max(jigSize, config.extrudeHeightMm);
     sceneRef.current.camera.position.z = maxDim * 2;
     sceneRef.current.controls.update();
 

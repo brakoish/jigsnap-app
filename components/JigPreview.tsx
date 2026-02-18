@@ -20,9 +20,7 @@ export default function JigPreview({
   // Generate SVG for preview
   const svgContent = generateSVG(contour, contourBounds, config, pixelsPerMm);
   
-  // Calculate dimensions
-  const jigWidth = contourBounds.width / pixelsPerMm + config.paddingMm * 2;
-  const jigHeight = contourBounds.height / pixelsPerMm + config.paddingMm * 2;
+  const jigSize = config.jigSizeMm;
   
   return (
     <div className="flex flex-col gap-4">
@@ -38,12 +36,12 @@ export default function JigPreview({
       {/* Dimensions Info */}
       <div className="grid grid-cols-2 gap-4">
         <div className="p-3 bg-zinc-800/50 rounded-lg border border-zinc-700">
-          <span className="text-xs text-zinc-500">Jig Width</span>
-          <p className="text-lg text-zinc-200">{jigWidth.toFixed(1)} mm</p>
+          <span className="text-xs text-zinc-500">Jig Size (square)</span>
+          <p className="text-lg text-zinc-200">{jigSize} × {jigSize} mm</p>
         </div>
         <div className="p-3 bg-zinc-800/50 rounded-lg border border-zinc-700">
-          <span className="text-xs text-zinc-500">Jig Height</span>
-          <p className="text-lg text-zinc-200">{jigHeight.toFixed(1)} mm</p>
+          <span className="text-xs text-zinc-500">Extrude Height</span>
+          <p className="text-lg text-zinc-200">{config.extrudeHeightMm} mm</p>
         </div>
       </div>
       

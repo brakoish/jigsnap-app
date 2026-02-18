@@ -2,15 +2,15 @@ import type { Point, Contour, JigConfig } from './types';
 
 export function generateSVG(
   contour: Contour,
-  jigSize: { width: number; height: number },
+  contourBounds: { width: number; height: number },
   config: JigConfig,
   pixelsPerMm: number
 ): string {
-  const padding = config.paddingMm;
+  const jigSize = config.jigSizeMm;
   
-  // Calculate jig dimensions with padding
-  const jigWidth = jigSize.width + padding * 2;
-  const jigHeight = jigSize.height + padding * 2;
+  // Square jig
+  const jigWidth = jigSize;
+  const jigHeight = jigSize;
   
   // Center the jig
   const viewBoxX = -jigWidth / 2;

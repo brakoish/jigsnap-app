@@ -38,9 +38,7 @@ export default function ExportPanel({
     setIsExporting(false);
   }, [contour, contourBounds, config, pixelsPerMm]);
 
-  // Calculate file size estimates
-  const jigWidth = contourBounds.width / pixelsPerMm + config.paddingMm * 2;
-  const jigHeight = contourBounds.height / pixelsPerMm + config.paddingMm * 2;
+  const jigSize = config.jigSizeMm;
   const svgSize = Math.round((contour.points.length * 20 + 1000) / 1024 * 10) / 10;
   const stlTriangleCount = Math.round(contour.points.length * 4 + 20);
   const stlSize = Math.round((stlTriangleCount * 50 + 84) / 1024 * 10) / 10;
@@ -91,7 +89,7 @@ export default function ExportPanel({
             <div className="grid grid-cols-2 gap-3 text-sm">
               <div className="p-2 bg-zinc-900 rounded">
                 <span className="text-zinc-500">Dimensions</span>
-                <p className="text-zinc-300">{jigWidth.toFixed(1)} × {jigHeight.toFixed(1)} mm</p>
+                <p className="text-zinc-300">{jigSize} × {jigSize} mm</p>
               </div>
               <div className="p-2 bg-zinc-900 rounded">
                 <span className="text-zinc-500">Est. Size</span>
@@ -131,8 +129,8 @@ export default function ExportPanel({
             
             <div className="grid grid-cols-2 gap-3 text-sm">
               <div className="p-2 bg-zinc-900 rounded">
-                <span className="text-zinc-500">Thickness</span>
-                <p className="text-zinc-300">{config.thicknessMm} mm</p>
+                <span className="text-zinc-500">Extrude Height</span>
+                <p className="text-zinc-300">{config.extrudeHeightMm} mm</p>
               </div>
               <div className="p-2 bg-zinc-900 rounded">
                 <span className="text-zinc-500">Est. Size</span>
@@ -141,10 +139,8 @@ export default function ExportPanel({
             </div>
 
             <div className="text-sm">
-              <span className="text-zinc-500">Pocket depth: </span>
-              <span className="text-zinc-300">
-                {config.pocketDepthMm === null ? 'Through-cut' : `${config.pocketDepthMm} mm`}
-              </span>
+              <span className="text-zinc-500">Cutout: </span>
+              <span className="text-zinc-300">Through-cut</span>
             </div>
 
             <button
@@ -176,8 +172,8 @@ export default function ExportPanel({
         <h4 className="text-sm font-medium text-zinc-300 mb-3">Export Summary</h4>
         <div className="space-y-2 text-sm">
           <div className="flex justify-between">
-            <span className="text-zinc-500">Jig dimensions</span>
-            <span className="text-zinc-300">{jigWidth.toFixed(1)} × {jigHeight.toFixed(1)} mm</span>
+            <span className="text-zinc-500">Jig size (square)</span>
+            <span className="text-zinc-300">{jigSize} × {jigSize} mm</span>
           </div>
           <div className="flex justify-between">
             <span className="text-zinc-500">Object cutout</span>

@@ -14,18 +14,6 @@ interface Triangle {
   normal: Vec3;
 }
 
-function subtract(a: Vec3, b: Vec3): Vec3 {
-  return { x: a.x - b.x, y: a.y - b.y, z: a.z - b.z };
-}
-
-function cross(a: Vec3, b: Vec3): Vec3 {
-  return {
-    x: a.y * b.z - a.z * b.y,
-    y: a.z * b.x - a.x * b.z,
-    z: a.x * b.y - a.y * b.x
-  };
-}
-
 function normalize(v: Vec3): Vec3 {
   const len = Math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
   if (len === 0) return { x: 0, y: 0, z: 1 };
@@ -34,17 +22,16 @@ function normalize(v: Vec3): Vec3 {
 
 export function generateSTL(
   contour: Contour,
-  jigSize: { width: number; height: number },
+  contourBounds: { width: number; height: number },
   config: JigConfig,
   pixelsPerMm: number
 ): ArrayBuffer {
-  const padding = config.paddingMm;
-  const thickness = config.thicknessMm;
-  const pocketDepth = config.pocketDepthMm ?? thickness; // Through-cut if null
+  const thickness = config.extrudeHeightMm;
+  const jigSize = config.jigSizeMm;
   
-  // Calculate jig dimensions
-  const jigWidth = jigSize.width + padding * 2;
-  const jigHeight = jigSize.height + padding * 2;
+  // Square jig
+  const jigWidth = jigSize;
+  const jigHeight = jigSize;
   
   // Center offset
   const centerX = contour.points.reduce((sum, p) => sum + p.x, 0) / contour.points.length;
@@ -90,8 +77,7 @@ export function generateSTL(
     });
   }
   
-  // 2. Top face (rectangle with hole)
-  // Create polygon with hole for earcut
+  // 2. Top face (rectangle with hole - through-cut)
   const outerFlat = outerRect.flatMap(p => [p.x, p.y]);
   const contourFlat = contourMm.flatMap(p => [p.x, p.y]);
   const holeIndices = [contourFlat.length / 2];
@@ -135,7 +121,6 @@ export function generateSTL(
     const p1 = outerRect[i];
     const p2 = outerRect[j];
     
-    // Calculate normal for this edge
     const edge = { x: p2.x - p1.x, y: p2.y - p1.y, z: 0 };
     const n = normalize({ x: edge.y, y: -edge.x, z: 0 });
     
@@ -148,29 +133,27 @@ export function generateSTL(
     );
   }
   
-  // 4. Side walls of contour (pocket/cutout)
-  const pocketZ = thickness - pocketDepth;
+  // 4. Side walls of contour (through-cut, z=0 to z=topZ)
   for (let i = 0; i < contourMm.length; i++) {
     const j = (i + 1) % contourMm.length;
     const p1 = contourMm[i];
     const p2 = contourMm[j];
     
-    // Calculate normal (pointing inward for cutout)
     const edge = { x: p2.x - p1.x, y: p2.y - p1.y, z: 0 };
     const n = normalize({ x: -edge.y, y: edge.x, z: 0 });
     
     addQuad(
-      { x: p1.x, y: p1.y, z: pocketZ },
+      { x: p1.x, y: p1.y, z: 0 },
       { x: p1.x, y: p1.y, z: topZ },
       { x: p2.x, y: p2.y, z: topZ },
-      { x: p2.x, y: p2.y, z: pocketZ },
+      { x: p2.x, y: p2.y, z: 0 },
       n
     );
   }
   
   // Write binary STL
   const headerSize = 80;
-  const triangleSize = 50; // 12 bytes per float * 4 floats (normal + 3 verts) + 2 bytes attribute
+  const triangleSize = 50;
   const bufferSize = headerSize + 4 + triangles.length * triangleSize;
   const buffer = new ArrayBuffer(bufferSize);
   const view = new DataView(buffer);
@@ -188,27 +171,22 @@ export function generateSTL(
   // Write triangles
   let offset = 84;
   for (const tri of triangles) {
-    // Normal
     view.setFloat32(offset, tri.normal.x, true);
     view.setFloat32(offset + 4, tri.normal.y, true);
     view.setFloat32(offset + 8, tri.normal.z, true);
     
-    // Vertex 1
     view.setFloat32(offset + 12, tri.v1.x, true);
     view.setFloat32(offset + 16, tri.v1.y, true);
     view.setFloat32(offset + 20, tri.v1.z, true);
     
-    // Vertex 2
     view.setFloat32(offset + 24, tri.v2.x, true);
     view.setFloat32(offset + 28, tri.v2.y, true);
     view.setFloat32(offset + 32, tri.v2.z, true);
     
-    // Vertex 3
     view.setFloat32(offset + 36, tri.v3.x, true);
     view.setFloat32(offset + 40, tri.v3.y, true);
     view.setFloat32(offset + 44, tri.v3.z, true);
     
-    // Attribute byte count (0)
     view.setUint16(offset + 48, 0, true);
     
     offset += 50;

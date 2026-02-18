@@ -9,9 +9,8 @@ export interface Contour {
 }
 
 export interface JigConfig {
-  paddingMm: number;
-  thicknessMm: number;
-  pocketDepthMm: number | null; // null = through-cut
+  extrudeHeightMm: number;
+  jigSizeMm: number; // square jig side length
 }
 
 export interface ScaleCalibration {
