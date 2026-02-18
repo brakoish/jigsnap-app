@@ -28,18 +28,6 @@ export default function ContourDetector({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
 
-  // Listen for OpenCV progress events
-  useEffect(() => {
-    const handler = (e: Event) => {
-      const step = (e as CustomEvent).detail;
-      if (step === 'downloading') setLoadingStep('Downloading OpenCV (~8MB)...');
-      else if (step === 'initializing') setLoadingStep('Initializing OpenCV...');
-      else if (step === 'ready') setLoadingStep('OpenCV ready!');
-    };
-    window.addEventListener('opencv-progress', handler);
-    return () => window.removeEventListener('opencv-progress', handler);
-  }, []);
-
   // Initial load and A4 detection
   useEffect(() => {
     const loadAndDetect = async () => {
@@ -59,10 +47,10 @@ export default function ContourDetector({
         });
         
         imageRef.current = img;
-        setLoadingStep('Loading OpenCV...');
+        setLoadingStep('Processing image...');
         
-        // Detect A4 paper (triggers OpenCV load)
-        const paper = await detectA4Paper(img);
+        // Detect A4 paper (stubbed - returns null)
+        const paper = await detectA4Paper();
         setA4Paper(paper);
         onA4Detected(paper);
         
@@ -71,7 +59,8 @@ export default function ContourDetector({
         // Initial contour detection
         await processContour(img, params);
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Unknown error');
+        console.error('[ContourDetector] Error:', err);
+        setError(err instanceof Error ? err.message : String(err));
       } finally {
         setIsLoading(false);
       }
@@ -90,7 +79,9 @@ export default function ContourDetector({
   const processContour = async (img: HTMLImageElement, processingParams: ProcessingParams) => {
     setIsProcessing(true);
     try {
+      console.log('[ContourDetector] processContour called, img:', img.naturalWidth, 'x', img.naturalHeight);
       const detectedContour = await detectContour(img, processingParams);
+      console.log('[ContourDetector] detectContour returned:', detectedContour ? `${detectedContour.points.length} points` : 'null');
       setContour(detectedContour);
       
       if (detectedContour && canvasRef.current) {
@@ -98,7 +89,7 @@ export default function ContourDetector({
         onContourDetected(detectedContour, img);
       }
     } catch (err) {
-      console.error('Contour detection failed:', err);
+      console.error('[ContourDetector] Contour detection failed:', err);
     } finally {
       setIsProcessing(false);
     }
@@ -109,55 +100,10 @@ export default function ContourDetector({
   };
 
   if (isLoading) {
-    const steps = [
-      { key: 'image', label: 'Load image' },
-      { key: 'opencv', label: 'Download OpenCV (~8MB)' },
-      { key: 'init', label: 'Initialize engine' },
-      { key: 'detect', label: 'Detect contours' },
-    ];
-    
-    // Determine which step we're on
-    let activeIndex = 0;
-    if (loadingStep.includes('OpenCV') && loadingStep.includes('Downloading')) activeIndex = 1;
-    else if (loadingStep.includes('Initializing')) activeIndex = 2;
-    else if (loadingStep.includes('Detecting') || loadingStep.includes('ready')) activeIndex = 3;
-    else if (loadingStep.includes('Loading OpenCV')) activeIndex = 1;
-
     return (
       <div className="flex flex-col items-center justify-center py-12 gap-6">
         <Loader2 className="w-8 h-8 animate-spin text-cyan-500" />
-        
-        {/* Progress steps */}
-        <div className="flex flex-col gap-2 w-full max-w-xs">
-          {steps.map((step, i) => (
-            <div key={step.key} className="flex items-center gap-3">
-              <div className={`
-                w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0
-                ${i < activeIndex 
-                  ? 'bg-cyan-600 text-white' 
-                  : i === activeIndex 
-                    ? 'bg-cyan-500/30 text-cyan-400 ring-2 ring-cyan-500 animate-pulse' 
-                    : 'bg-zinc-800 text-zinc-600'
-                }
-              `}>
-                {i < activeIndex ? '✓' : i + 1}
-              </div>
-              <span className={`text-sm ${
-                i < activeIndex 
-                  ? 'text-zinc-500 line-through' 
-                  : i === activeIndex 
-                    ? 'text-zinc-200 font-medium' 
-                    : 'text-zinc-600'
-              }`}>
-                {step.label}
-              </span>
-            </div>
-          ))}
-        </div>
-
-        <p className="text-zinc-500 text-xs text-center">
-          First load takes longer — OpenCV caches for next time
-        </p>
+        <p className="text-zinc-400">{loadingStep}</p>
       </div>
     );
   }

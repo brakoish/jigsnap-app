@@ -1,93 +1,27 @@
 import type { Point, Contour, ProcessingParams } from './types';
-import { loadOpenCV, safeDelete, type OpenCVMat, type OpenCVMatVector } from './opencv';
+import { detectContourFromCanvas } from './contour-detect';
 
 export async function detectContour(
   imageElement: HTMLImageElement | HTMLCanvasElement,
   params: ProcessingParams
 ): Promise<Contour | null> {
-  const cv = await loadOpenCV();
+  // Convert image to canvas if needed
+  const canvas = imageElement instanceof HTMLCanvasElement 
+    ? imageElement 
+    : imageToCanvas(imageElement);
   
-  let src: OpenCVMat | null = null;
-  let gray: OpenCVMat | null = null;
-  let blurred: OpenCVMat | null = null;
-  let edges: OpenCVMat | null = null;
-  let contours: OpenCVMatVector | null = null;
-  let hierarchy: OpenCVMat | null = null;
+  // Use lightweight pure-JS contour detection
+  return detectContourFromCanvas(canvas, params);
+}
 
-  try {
-    // Read image
-    src = cv.imread(imageElement);
-    
-    // Convert to grayscale
-    gray = new cv.Mat();
-    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-    
-    // Gaussian blur
-    blurred = new cv.Mat();
-    const kernelSize = params.blurKernel;
-    cv.GaussianBlur(gray, blurred, new cv.Size(kernelSize, kernelSize), 0);
-    
-    // Canny edge detection
-    edges = new cv.Mat();
-    cv.Canny(blurred, edges, params.cannyLow, params.cannyHigh);
-    
-    // Find contours
-    contours = new cv.MatVector();
-    hierarchy = new cv.Mat();
-    cv.findContours(
-      edges,
-      contours,
-      hierarchy,
-      cv.RETR_EXTERNAL,
-      cv.CHAIN_APPROX_SIMPLE
-    );
-    
-    // Find largest contour
-    let largestContour: OpenCVMat | null = null;
-    let largestArea = 0;
-    
-    for (let i = 0; i < contours.size(); i++) {
-      const contour = contours.get(i);
-      const area = cv.contourArea(contour);
-      if (area > largestArea) {
-        largestArea = area;
-        if (largestContour) largestContour.delete();
-        largestContour = contour;
-      } else {
-        contour.delete();
-      }
-    }
-    
-    if (!largestContour || largestArea < 1000) {
-      return null;
-    }
-    
-    // Simplify contour with approxPolyDP
-    const epsilon = params.epsilon * cv.arcLength(largestContour, true);
-    const approxCurve = new cv.Mat();
-    cv.approxPolyDP(largestContour, approxCurve, epsilon, true);
-    
-    // Convert to points
-    const points: Point[] = [];
-    for (let i = 0; i < approxCurve.rows; i++) {
-      const x = approxCurve.data32S[i * 2];
-      const y = approxCurve.data32S[i * 2 + 1];
-      points.push({ x, y });
-    }
-    
-    approxCurve.delete();
-    
-    return {
-      points,
-      area: largestArea
-    };
-  } finally {
-    safeDelete(src, gray, blurred, edges, hierarchy);
-    if (contours) {
-      // Contours are already deleted in the loop or stored in largestContour
-      contours.delete();
-    }
-  }
+// Convert image to canvas for processing
+function imageToCanvas(img: HTMLImageElement): HTMLCanvasElement {
+  const canvas = document.createElement('canvas');
+  canvas.width = img.naturalWidth || img.width;
+  canvas.height = img.naturalHeight || img.height;
+  const ctx = canvas.getContext('2d')!;
+  ctx.drawImage(img, 0, 0);
+  return canvas;
 }
 
 export function drawContourOnCanvas(
