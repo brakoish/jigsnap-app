@@ -111,7 +111,17 @@ export async function loadOpenCV(): Promise<OpenCV> {
     // Case 2: cv is a Promise/thenable
     if (cv && typeof cv.then === 'function' && !cv.Mat) {
       console.log('[OpenCV] Awaiting cv promise...');
-      cv = await cv;
+      // Race against a timeout so we know if it hangs
+      const timeout = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('OpenCV WASM init timed out after 30s')), 30000)
+      );
+      try {
+        cv = await Promise.race([cv, timeout]);
+        console.log('[OpenCV] Promise resolved. cv type:', typeof cv, 'has Mat?', !!(cv && cv.Mat));
+      } catch (e) {
+        console.error('[OpenCV] Promise failed:', e);
+        throw e;
+      }
     }
 
     // Case 3: still not ready — poll for it
