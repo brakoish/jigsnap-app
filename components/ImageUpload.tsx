@@ -1,10 +1,10 @@
 'use client';
 
 import React, { useState, useRef, useCallback } from 'react';
-import { Upload, Camera, X, ImageIcon } from 'lucide-react';
+import { Upload, Camera, X } from 'lucide-react';
 
 interface ImageUploadProps {
-  onImageUpload: (imageUrl: string, file: File) => void;
+  onImageUpload: (imageUrl: string, file?: File) => void;
   currentImage?: string | null;
   onRetake?: () => void;
 }
@@ -24,7 +24,6 @@ export default function ImageUpload({ onImageUpload, currentImage, onRetake }: I
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(false);
-    
     const file = e.dataTransfer.files[0];
     if (file) handleFile(file);
   }, [handleFile]);
@@ -42,6 +41,8 @@ export default function ImageUpload({ onImageUpload, currentImage, onRetake }: I
   const handleFileInput = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) handleFile(file);
+    // Reset the input so the same file can be re-selected
+    e.target.value = '';
   }, [handleFile]);
 
   if (currentImage) {
@@ -73,12 +74,11 @@ export default function ImageUpload({ onImageUpload, currentImage, onRetake }: I
 
   return (
     <div className="flex flex-col gap-4">
-      {/* Drag & Drop Zone */}
-      <div
+      {/* Upload from library - uses label wrapping input for maximum iOS compatibility */}
+      <label
         onDrop={handleDrop}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
-        onClick={() => fileInputRef.current?.click()}
         className={`
           relative border-2 border-dashed rounded-xl p-12 cursor-pointer
           transition-all duration-200 ease-in-out
@@ -99,47 +99,41 @@ export default function ImageUpload({ onImageUpload, currentImage, onRetake }: I
         
         <div className="text-center">
           <p className="text-zinc-300 font-medium">
-            Drop an image here, or click to browse
+            Tap to upload a photo
           </p>
           <p className="text-zinc-500 text-sm mt-1">
-            Supports JPG, PNG
+            JPG, PNG — or drag &amp; drop on desktop
           </p>
         </div>
-        
-        {/* Animated border effect when dragging */}
-        {isDragging && (
-          <div className="absolute inset-0 rounded-xl border-2 border-cyan-400 animate-pulse" />
-        )}
-      </div>
 
-      {/* Camera Button (Mobile) */}
-      <button
-        onClick={() => cameraInputRef.current?.click()}
-        className="flex items-center justify-center gap-2 px-6 py-3 
-                   bg-zinc-800 hover:bg-zinc-700 text-zinc-200 
-                   rounded-lg transition-colors border border-zinc-700"
-      >
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          onChange={handleFileInput}
+          className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+        />
+
+        {isDragging && (
+          <div className="absolute inset-0 rounded-xl border-2 border-cyan-400 animate-pulse pointer-events-none" />
+        )}
+      </label>
+
+      {/* Take Photo button — uses label with capture attribute for direct camera access on mobile */}
+      <label className="flex items-center justify-center gap-2 px-6 py-3 
+                   bg-cyan-700 hover:bg-cyan-600 text-white 
+                   rounded-lg transition-colors border border-cyan-600 cursor-pointer">
         <Camera className="w-5 h-5" />
         <span>Take Photo</span>
-        <span className="text-xs text-zinc-500 ml-1">(Mobile)</span>
-      </button>
-
-      {/* Hidden Inputs */}
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept="image/jpeg,image/png,image/jpg"
-        onChange={handleFileInput}
-        className="hidden"
-      />
-      <input
-        ref={cameraInputRef}
-        type="file"
-        accept="image/*"
-        capture="environment"
-        onChange={handleFileInput}
-        className="hidden"
-      />
+        <input
+          ref={cameraInputRef}
+          type="file"
+          accept="image/*"
+          capture="environment"
+          onChange={handleFileInput}
+          className="hidden"
+        />
+      </label>
     </div>
   );
 }
