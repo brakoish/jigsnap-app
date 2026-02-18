@@ -8,6 +8,13 @@ export interface Contour {
   area: number;
 }
 
+export interface ContourCandidate {
+  points: Point[];
+  area: number;
+  isPaper: boolean;
+  detectionMethod: 'canny' | 'adaptive' | 'binary';
+}
+
 export interface JigConfig {
   extrudeHeightMm: number;
   jigSizeMm: number; // square jig side length

@@ -1,5 +1,5 @@
 import type { Point, A4Paper } from './types';
-import { loadOpenCV, safeDelete, imageToCanvas } from './opencv-loader';
+import { loadOpenCV, getCv, safeDelete, imageToCanvas, getImageScale } from './opencv-loader';
 
 // Paper sizes in mm
 export const PAPER_SIZES = {
@@ -17,20 +17,27 @@ export async function detectPaper(
   imageElement: HTMLImageElement,
   paperSize: PaperSize = 'letter'
 ): Promise<A4Paper | null> {
-  const cv = await loadOpenCV();
+  console.log('[paper] detectPaper starting...');
+  await loadOpenCV();
+  const cv = getCv();
+  console.log('[paper] OpenCV ready');
 
-  // Convert image to canvas for cv.imread
+  // Convert image to canvas (resized for performance)
   const canvas = imageToCanvas(imageElement);
+  const scale = 1 / getImageScale(imageElement);
   const w = canvas.width;
   const h = canvas.height;
 
+  console.log('[paper] Processing at', w, 'x', h, '(scale:', scale, ')');
   if (w === 0 || h === 0) return null;
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let src: any, gray: any, blurred: any, edges: any, contours: any, hierarchy: any;
 
   try {
-    // Read image into OpenCV Mat
+    console.log('[paper] cv.imread...');
     src = cv.imread(canvas);
+    console.log('[paper] imread done:', src.rows, 'x', src.cols);
 
     // Convert to grayscale
     gray = new cv.Mat();
@@ -49,6 +56,7 @@ export async function detectPaper(
     contours = new cv.MatVector();
     hierarchy = new cv.Mat();
     cv.findContours(edges, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+    console.log('[paper] findContours found:', contours.size());
 
     if (contours.size() === 0) {
       return null;
@@ -114,18 +122,27 @@ export async function detectPaper(
       }
     }
 
-    if (!bestContour) return null;
+    if (!bestContour) {
+      console.log('[paper] No paper found');
+      return null;
+    }
 
-    // Calculate width and height from corners
-    const xs = bestContour.map(p => p.x);
-    const ys = bestContour.map(p => p.y);
+    // Scale corners back to original image coordinates
+    const scaledCorners = bestContour.map(p => ({
+      x: Math.round(p.x * scale),
+      y: Math.round(p.y * scale),
+    }));
+
+    const xs = scaledCorners.map(p => p.x);
+    const ys = scaledCorners.map(p => p.y);
     const minX = Math.min(...xs);
     const maxX = Math.max(...xs);
     const minY = Math.min(...ys);
     const maxY = Math.max(...ys);
 
+    console.log('[paper] Paper found:', (maxX - minX), 'x', (maxY - minY), 'px');
     return {
-      corners: bestContour,
+      corners: scaledCorners,
       width: maxX - minX,
       height: maxY - minY,
     };
