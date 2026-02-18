@@ -71,7 +71,7 @@ export default function ScaleCalibration({
 
   return (
     <div className="flex flex-col gap-6">
-      {/* Auto Calibration (A4) */}
+      {/* Auto Calibration (Paper) */}
       {a4Paper && (
         <div 
           className={`
@@ -91,9 +91,9 @@ export default function ScaleCalibration({
               {!useManual && <Check className="w-3 h-3 text-white" />}
             </div>
             <div className="flex-1">
-              <h4 className="font-medium text-zinc-200">Auto (A4 Paper)</h4>
+              <h4 className="font-medium text-zinc-200">Auto (Paper)</h4>
               <p className="text-sm text-zinc-400 mt-1">
-                Using detected A4 paper for scale calibration
+                Using detected paper for scale calibration
               </p>
               <div className="mt-2 text-sm">
                 <span className="text-cyan-400">
@@ -220,7 +220,7 @@ export default function ScaleCalibration({
       {!a4Paper && !useManual && (
         <div className="flex items-center gap-2 p-3 bg-amber-900/20 border border-amber-800 rounded-lg text-amber-400 text-sm">
           <AlertCircle className="w-4 h-4" />
-          No A4 paper detected. Please switch to manual calibration.
+          No paper detected. Please switch to manual calibration.
         </div>
       )}
     </div>

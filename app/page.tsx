@@ -141,7 +141,7 @@ export default function Home() {
               <div className="text-center mb-8">
                 <h2 className="text-2xl font-semibold text-white mb-2">Upload Photo</h2>
                 <p className="text-zinc-400">
-                  Take a photo of your object on A4 paper for automatic scale detection
+                  Take a photo of your object on white paper (US Letter or A4) for automatic scale detection
                 </p>
               </div>
               <div className="max-w-md mx-auto">
@@ -155,7 +155,7 @@ export default function Home() {
                 <p>Tips for best results:</p>
                 <ul className="mt-2 space-y-1">
                   <li>• Use good lighting with minimal shadows</li>
-                  <li>• Place object on white A4 paper for scale</li>
+                  <li>• Place object on white paper for scale</li>
                   <li>• Take photo from directly above</li>
                 </ul>
               </div>

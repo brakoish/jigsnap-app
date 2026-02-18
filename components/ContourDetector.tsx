@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Loader2, RefreshCw } from 'lucide-react';
 import { detectContour, drawContourOnCanvas, getDefaultProcessingParams } from '@/lib/contour';
-import { detectA4Paper } from '@/lib/paper-detect';
+import { detectPaper } from '@/lib/paper-detect';
 import type { Contour, A4Paper, ProcessingParams } from '@/lib/types';
 
 interface ContourDetectorProps {
@@ -12,10 +12,10 @@ interface ContourDetectorProps {
   onA4Detected: (paper: A4Paper | null) => void;
 }
 
-export default function ContourDetector({ 
-  imageUrl, 
+export default function ContourDetector({
+  imageUrl,
   onContourDetected,
-  onA4Detected 
+  onA4Detected
 }: ContourDetectorProps) {
   const [isLoading, setIsLoading] = useState(true);
   const [loadingStep, setLoadingStep] = useState<string>('Loading image...');
@@ -24,38 +24,62 @@ export default function ContourDetector({
   const [contour, setContour] = useState<Contour | null>(null);
   const [a4Paper, setA4Paper] = useState<A4Paper | null>(null);
   const [error, setError] = useState<string | null>(null);
-  
+
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
 
-  // Initial load and A4 detection
+  // Listen for OpenCV progress events
+  useEffect(() => {
+    const handleOpenCVProgress = (e: CustomEvent) => {
+      const step = e.detail;
+      if (step === 'initializing') {
+        setLoadingStep('Initializing OpenCV...');
+      } else if (step === 'ready') {
+        setLoadingStep('OpenCV ready, detecting contours...');
+      }
+    };
+
+    window.addEventListener('opencv-progress', handleOpenCVProgress as EventListener);
+    return () => {
+      window.removeEventListener('opencv-progress', handleOpenCVProgress as EventListener);
+    };
+  }, []);
+
+  // Initial load and paper detection
   useEffect(() => {
     const loadAndDetect = async () => {
       setIsLoading(true);
       setError(null);
       setLoadingStep('Loading image...');
-      
+
       try {
         // Load image
         const img = new Image();
         img.crossOrigin = 'anonymous';
-        
+
         await new Promise<void>((resolve, reject) => {
           img.onload = () => resolve();
           img.onerror = () => reject(new Error('Failed to load image'));
           img.src = imageUrl;
         });
-        
+
         imageRef.current = img;
-        setLoadingStep('Processing image...');
-        
-        // Detect A4 paper (stubbed - returns null)
-        const paper = await detectA4Paper();
+        setLoadingStep('Detecting paper...');
+
+        // Detect paper
+        let paper: A4Paper | null = null;
+        try {
+          paper = await detectPaper(img, 'letter');
+        } catch (paperErr) {
+          console.warn('[ContourDetector] Paper detection failed:', paperErr);
+          // Paper detection failure is not fatal
+        }
+
         setA4Paper(paper);
         onA4Detected(paper);
-        
+
         setLoadingStep('Detecting contours...');
-        
+
         // Initial contour detection
         await processContour(img, params);
       } catch (err) {
@@ -65,7 +89,7 @@ export default function ContourDetector({
         setIsLoading(false);
       }
     };
-    
+
     loadAndDetect();
   }, [imageUrl, onA4Detected]);
 
@@ -78,18 +102,20 @@ export default function ContourDetector({
 
   const processContour = async (img: HTMLImageElement, processingParams: ProcessingParams) => {
     setIsProcessing(true);
+    setError(null);
     try {
       console.log('[ContourDetector] processContour called, img:', img.naturalWidth, 'x', img.naturalHeight);
       const detectedContour = await detectContour(img, processingParams);
       console.log('[ContourDetector] detectContour returned:', detectedContour ? `${detectedContour.points.length} points` : 'null');
       setContour(detectedContour);
-      
+
       if (detectedContour && canvasRef.current) {
         drawContourOnCanvas(canvasRef.current, detectedContour, img);
         onContourDetected(detectedContour, img);
       }
     } catch (err) {
       console.error('[ContourDetector] Contour detection failed:', err);
+      setError(err instanceof Error ? err.message : 'Contour detection failed');
     } finally {
       setIsProcessing(false);
     }
@@ -112,7 +138,7 @@ export default function ContourDetector({
     return (
       <div className="p-6 bg-red-900/20 border border-red-800 rounded-lg text-center">
         <p className="text-red-400">Error: {error}</p>
-        <button 
+        <button
           onClick={() => window.location.reload()}
           className="mt-4 px-4 py-2 bg-red-600 hover:bg-red-500 rounded-lg text-white"
         >
@@ -124,26 +150,26 @@ export default function ContourDetector({
 
   return (
     <div className="flex flex-col gap-6">
-      {/* A4 Detection Status */}
+      {/* Paper Detection Status */}
       {a4Paper ? (
         <div className="flex items-center gap-2 p-3 bg-green-900/20 border border-green-800 rounded-lg">
           <div className="w-2 h-2 bg-green-500 rounded-full" />
           <span className="text-green-400 text-sm">
-            A4 paper detected - scale calibration available
+            paper detected - scale calibration available
           </span>
         </div>
       ) : (
         <div className="flex items-center gap-2 p-3 bg-zinc-800/50 border border-zinc-700 rounded-lg">
           <div className="w-2 h-2 bg-zinc-500 rounded-full" />
           <span className="text-zinc-400 text-sm">
-            No A4 paper detected - manual scale entry required
+            No paper detected - manual scale entry required
           </span>
         </div>
       )}
 
       {/* Canvas Display */}
       <div className="relative rounded-lg overflow-hidden border border-zinc-700 bg-zinc-900">
-        <canvas 
+        <canvas
           ref={canvasRef}
           className="max-w-full h-auto block"
           style={{ maxHeight: '400px' }}
@@ -153,7 +179,7 @@ export default function ContourDetector({
             <RefreshCw className="w-6 h-6 animate-spin text-cyan-500" />
           </div>
         )}
-        
+
         {/* Legend */}
         <div className="absolute bottom-2 left-2 flex gap-4 text-xs bg-zinc-900/80 px-3 py-2 rounded-lg">
           <div className="flex items-center gap-1.5">
@@ -170,7 +196,7 @@ export default function ContourDetector({
       {/* Controls */}
       <div className="space-y-4 bg-zinc-800/50 p-4 rounded-lg border border-zinc-700">
         <h4 className="text-sm font-medium text-zinc-300">Detection Parameters</h4>
-        
+
         {/* Blur Kernel */}
         <div className="space-y-2">
           <div className="flex justify-between text-xs">
