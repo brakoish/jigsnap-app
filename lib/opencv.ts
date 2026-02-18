@@ -62,24 +62,44 @@ export async function loadOpenCV(): Promise<OpenCV> {
       return;
     }
 
-    // Create script element
+    // Create script element — use jsDelivr CDN (faster & more reliable than docs.opencv.org)
     const script = document.createElement('script');
-    script.src = 'https://docs.opencv.org/4.x/opencv.js';
+    script.src = 'https://cdn.jsdelivr.net/npm/opencv.js@1.2.1/opencv.js';
     script.async = true;
     
+    // Timeout after 30 seconds
+    const timeout = setTimeout(() => {
+      opencvPromise = null;
+      reject(new Error('OpenCV.js load timed out — try refreshing'));
+    }, 30000);
+
     script.onload = () => {
-      // Wait for OpenCV to be ready
-      const checkReady = () => {
+      // OpenCV.js sets window.cv as a function that resolves when ready,
+      // or sets it directly. Handle both cases.
+      const checkReady = (attempts: number) => {
+        if (attempts > 100) {
+          clearTimeout(timeout);
+          opencvPromise = null;
+          reject(new Error('OpenCV.js failed to initialize'));
+          return;
+        }
         if (window.cv && window.cv.Mat) {
+          clearTimeout(timeout);
           resolve(window.cv);
+        } else if (window.cv && typeof window.cv === 'function') {
+          // OpenCV module factory — call it
+          (window.cv as unknown as (cv: OpenCV) => void)(window.cv);
+          setTimeout(() => checkReady(attempts + 1), 100);
         } else {
-          setTimeout(checkReady, 100);
+          setTimeout(() => checkReady(attempts + 1), 100);
         }
       };
-      checkReady();
+      checkReady(0);
     };
 
     script.onerror = () => {
+      clearTimeout(timeout);
+      opencvPromise = null;
       reject(new Error('Failed to load OpenCV.js'));
     };
 
