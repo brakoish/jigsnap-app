@@ -82,43 +82,67 @@ export async function loadOpenCV(): Promise<OpenCV> {
     console.log('[OpenCV] Script loaded. window.cv type:', typeof window.cv);
     dispatchProgress('initializing');
 
-    // OpenCV 4.x: window.cv is a factory function that returns a Promise
-    // The script's IIFE calls `cv(Module)` at the end, which sets window.cv 
-    // to the result. But depending on timing, window.cv might still be the 
-    // factory function or already the resolved module.
+    // OpenCV 4.x UMD: window.cv gets set to a factory function by the wrapper.
+    // The factory expects a Module config object and returns a Promise that 
+    // resolves to the initialized cv module.
     let cv = window.cv;
+    console.log('[OpenCV] window.cv type after script load:', typeof cv);
+    console.log('[OpenCV] window.cv has .Mat?', !!(cv && cv.Mat));
+    console.log('[OpenCV] window.cv has .then?', !!(cv && cv.then));
 
-    // If cv is a function (factory), call it to get the module promise
-    if (typeof cv === 'function') {
-      console.log('[OpenCV] cv is a factory function, calling it...');
-      cv = await cv();
-      window.cv = cv;
+    // Case 1: cv is a factory function — call it with empty config
+    if (typeof cv === 'function' && !cv.Mat) {
+      console.log('[OpenCV] Calling cv factory function...');
+      try {
+        const result = cv({});
+        console.log('[OpenCV] Factory returned:', typeof result, 'has .then?', !!(result && result.then));
+        if (result && typeof result.then === 'function') {
+          cv = await result;
+        } else {
+          cv = result;
+        }
+      } catch (e) {
+        console.error('[OpenCV] Factory call failed:', e);
+        // Factory might have already been called by the IIFE. Poll instead.
+        cv = null;
+      }
     }
-    
-    // If cv is a Promise/thenable, await it
-    if (cv && typeof cv.then === 'function') {
-      console.log('[OpenCV] cv is a Promise, awaiting...');
+
+    // Case 2: cv is a Promise/thenable
+    if (cv && typeof cv.then === 'function' && !cv.Mat) {
+      console.log('[OpenCV] Awaiting cv promise...');
       cv = await cv;
-      window.cv = cv;
     }
 
-    // Poll as last resort (shouldn't be needed but just in case)
+    // Case 3: still not ready — poll for it
     if (!cv || !cv.Mat) {
-      console.log('[OpenCV] cv.Mat not ready, polling...');
-      cv = await new Promise<OpenCV>((resolve, reject) => {
+      console.log('[OpenCV] Polling for cv.Mat...', 'current cv type:', typeof cv);
+      cv = await new Promise<any>((resolve, reject) => {
         let attempts = 0;
         const poll = () => {
-          if (window.cv && window.cv.Mat) {
-            resolve(window.cv as OpenCV);
-          } else if (attempts++ > 200) {
-            reject(new Error('OpenCV.js initialized but cv.Mat never appeared'));
+          // Check both the local cv and window.cv (IIFE may update window.cv)
+          const current = window.cv;
+          if (current && current.Mat) {
+            console.log('[OpenCV] Poll found cv.Mat at attempt', attempts);
+            resolve(current);
+          } else if (attempts++ > 300) { // 30 seconds
+            console.error('[OpenCV] Poll gave up. window.cv type:', typeof window.cv);
+            if (window.cv) {
+              console.error('[OpenCV] window.cv keys:', Object.keys(window.cv).slice(0, 10));
+            }
+            reject(new Error('OpenCV.js failed to initialize after 30s'));
           } else {
+            if (attempts % 50 === 0) {
+              console.log(`[OpenCV] Poll attempt ${attempts}...`);
+            }
             setTimeout(poll, 100);
           }
         };
         poll();
       });
     }
+
+    window.cv = cv;
 
     console.log('[OpenCV] Ready! cv.Mat:', !!cv.Mat, 'cv.imread:', !!cv.imread);
     dispatchProgress('ready');
