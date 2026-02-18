@@ -47,11 +47,9 @@ declare global {
   interface Window {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     cv: any;
-    Module: any;
   }
 }
 
-// Dispatch progress events so the UI can show status
 function dispatchProgress(step: string) {
   console.log(`[OpenCV] ${step}`);
   window.dispatchEvent(new CustomEvent('opencv-progress', { detail: step }));
@@ -62,96 +60,70 @@ export async function loadOpenCV(): Promise<OpenCV> {
     return opencvPromise;
   }
 
-  opencvPromise = new Promise((resolve, reject) => {
-    // Check if already loaded and ready
+  opencvPromise = (async () => {
+    // Already loaded and ready
     if (typeof window !== 'undefined' && window.cv && window.cv.Mat) {
-      console.log('[OpenCV] Already loaded and ready');
-      resolve(window.cv as OpenCV);
-      return;
+      console.log('[OpenCV] Already loaded');
+      return window.cv as OpenCV;
     }
-
-    // Timeout after 90 seconds (opencv.js is ~8MB, mobile can be slow)
-    const timeout = setTimeout(() => {
-      console.error('[OpenCV] Timed out after 90s');
-      console.log('[OpenCV] window.cv type:', typeof window.cv);
-      console.log('[OpenCV] window.cv keys:', window.cv ? Object.keys(window.cv).slice(0, 20) : 'null');
-      opencvPromise = null;
-      reject(new Error('OpenCV.js load timed out after 90s — try refreshing'));
-    }, 90000);
-
-    let resolved = false;
-    const doResolve = (cv: OpenCV) => {
-      if (resolved) return;
-      resolved = true;
-      clearTimeout(timeout);
-      dispatchProgress('ready');
-      console.log('[OpenCV] Ready! cv.Mat exists:', !!cv.Mat);
-      resolve(cv);
-    };
-
-    // Set up the onRuntimeInitialized callback BEFORE loading the script.
-    // OpenCV.js 4.x checks for window.Module.onRuntimeInitialized during init.
-    window.Module = window.Module || {};
-    window.Module.onRuntimeInitialized = () => {
-      console.log('[OpenCV] onRuntimeInitialized fired');
-      dispatchProgress('initializing');
-      // Give it a tick to finish setting up cv properties
-      setTimeout(() => {
-        if (window.cv && window.cv.Mat) {
-          doResolve(window.cv as OpenCV);
-        } else {
-          console.log('[OpenCV] onRuntimeInitialized fired but cv.Mat not ready, polling...');
-          poll(0);
-        }
-      }, 100);
-    };
-
-    // Polling fallback
-    const poll = (attempts: number) => {
-      if (resolved) return;
-      if (attempts > 300) { // 30 seconds
-        console.error('[OpenCV] Polling gave up after 300 attempts');
-        clearTimeout(timeout);
-        opencvPromise = null;
-        reject(new Error('OpenCV.js failed to initialize — try refreshing'));
-        return;
-      }
-      if (window.cv && window.cv.Mat) {
-        doResolve(window.cv as OpenCV);
-      } else {
-        if (attempts % 50 === 0) {
-          console.log(`[OpenCV] Polling attempt ${attempts}, cv type:`, typeof window.cv, 
-            'cv.Mat:', window.cv?.Mat ? 'yes' : 'no');
-        }
-        setTimeout(() => poll(attempts + 1), 100);
-      }
-    };
 
     dispatchProgress('downloading');
 
-    // Create and load script
-    const script = document.createElement('script');
-    script.src = 'https://docs.opencv.org/4.x/opencv.js';
-    script.async = true;
+    // Load the script
+    await new Promise<void>((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = 'https://docs.opencv.org/4.x/opencv.js';
+      script.async = true;
+      script.onload = () => resolve();
+      script.onerror = () => reject(new Error('Failed to download OpenCV.js'));
+      document.head.appendChild(script);
+    });
 
-    script.onload = () => {
-      console.log('[OpenCV] Script loaded. cv type:', typeof window.cv);
-      dispatchProgress('initializing');
-      
-      // Start polling as the primary mechanism
-      // onRuntimeInitialized may or may not fire depending on the build
-      poll(0);
-    };
+    console.log('[OpenCV] Script loaded. window.cv type:', typeof window.cv);
+    dispatchProgress('initializing');
 
-    script.onerror = (e) => {
-      console.error('[OpenCV] Script load error:', e);
-      clearTimeout(timeout);
-      opencvPromise = null;
-      reject(new Error('Failed to download OpenCV.js — check your connection'));
-    };
+    // OpenCV 4.x: window.cv is a factory function that returns a Promise
+    // The script's IIFE calls `cv(Module)` at the end, which sets window.cv 
+    // to the result. But depending on timing, window.cv might still be the 
+    // factory function or already the resolved module.
+    let cv = window.cv;
 
-    document.head.appendChild(script);
-  });
+    // If cv is a function (factory), call it to get the module promise
+    if (typeof cv === 'function') {
+      console.log('[OpenCV] cv is a factory function, calling it...');
+      cv = await cv();
+      window.cv = cv;
+    }
+    
+    // If cv is a Promise/thenable, await it
+    if (cv && typeof cv.then === 'function') {
+      console.log('[OpenCV] cv is a Promise, awaiting...');
+      cv = await cv;
+      window.cv = cv;
+    }
+
+    // Poll as last resort (shouldn't be needed but just in case)
+    if (!cv || !cv.Mat) {
+      console.log('[OpenCV] cv.Mat not ready, polling...');
+      cv = await new Promise<OpenCV>((resolve, reject) => {
+        let attempts = 0;
+        const poll = () => {
+          if (window.cv && window.cv.Mat) {
+            resolve(window.cv as OpenCV);
+          } else if (attempts++ > 200) {
+            reject(new Error('OpenCV.js initialized but cv.Mat never appeared'));
+          } else {
+            setTimeout(poll, 100);
+          }
+        };
+        poll();
+      });
+    }
+
+    console.log('[OpenCV] Ready! cv.Mat:', !!cv.Mat, 'cv.imread:', !!cv.imread);
+    dispatchProgress('ready');
+    return cv as OpenCV;
+  })();
 
   return opencvPromise;
 }
@@ -162,7 +134,6 @@ export function isOpenCVReady(): boolean {
          window.cv.Mat !== undefined;
 }
 
-// Helper to safely delete OpenCV Mats to prevent memory leaks
 export function safeDelete(...mats: (OpenCVMat | null | undefined)[]): void {
   mats.forEach(mat => {
     if (mat && typeof mat.delete === 'function') {
