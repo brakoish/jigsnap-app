@@ -46,8 +46,15 @@ let opencvPromise: Promise<OpenCV> | null = null;
 declare global {
   interface Window {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    cv: OpenCV;
+    cv: any;
+    Module: any;
   }
+}
+
+// Dispatch progress events so the UI can show status
+function dispatchProgress(step: string) {
+  console.log(`[OpenCV] ${step}`);
+  window.dispatchEvent(new CustomEvent('opencv-progress', { detail: step }));
 }
 
 export async function loadOpenCV(): Promise<OpenCV> {
@@ -56,70 +63,91 @@ export async function loadOpenCV(): Promise<OpenCV> {
   }
 
   opencvPromise = new Promise((resolve, reject) => {
-    // Check if already loaded
-    if (typeof window !== 'undefined' && window.cv) {
-      resolve(window.cv);
+    // Check if already loaded and ready
+    if (typeof window !== 'undefined' && window.cv && window.cv.Mat) {
+      console.log('[OpenCV] Already loaded and ready');
+      resolve(window.cv as OpenCV);
       return;
     }
 
-    // Create script element
-    const script = document.createElement('script');
-    script.src = 'https://docs.opencv.org/4.x/opencv.js';
-    script.async = true;
-    
-    // Timeout after 60 seconds (opencv.js is ~8MB)
+    // Timeout after 90 seconds (opencv.js is ~8MB, mobile can be slow)
     const timeout = setTimeout(() => {
+      console.error('[OpenCV] Timed out after 90s');
+      console.log('[OpenCV] window.cv type:', typeof window.cv);
+      console.log('[OpenCV] window.cv keys:', window.cv ? Object.keys(window.cv).slice(0, 20) : 'null');
       opencvPromise = null;
-      reject(new Error('OpenCV.js load timed out after 60s — try refreshing'));
-    }, 60000);
+      reject(new Error('OpenCV.js load timed out after 90s — try refreshing'));
+    }, 90000);
 
-    // Dispatch progress events so the UI can show status
-    const dispatchProgress = (step: string) => {
-      window.dispatchEvent(new CustomEvent('opencv-progress', { detail: step }));
+    let resolved = false;
+    const doResolve = (cv: OpenCV) => {
+      if (resolved) return;
+      resolved = true;
+      clearTimeout(timeout);
+      dispatchProgress('ready');
+      console.log('[OpenCV] Ready! cv.Mat exists:', !!cv.Mat);
+      resolve(cv);
+    };
+
+    // Set up the onRuntimeInitialized callback BEFORE loading the script.
+    // OpenCV.js 4.x checks for window.Module.onRuntimeInitialized during init.
+    window.Module = window.Module || {};
+    window.Module.onRuntimeInitialized = () => {
+      console.log('[OpenCV] onRuntimeInitialized fired');
+      dispatchProgress('initializing');
+      // Give it a tick to finish setting up cv properties
+      setTimeout(() => {
+        if (window.cv && window.cv.Mat) {
+          doResolve(window.cv as OpenCV);
+        } else {
+          console.log('[OpenCV] onRuntimeInitialized fired but cv.Mat not ready, polling...');
+          poll(0);
+        }
+      }, 100);
+    };
+
+    // Polling fallback
+    const poll = (attempts: number) => {
+      if (resolved) return;
+      if (attempts > 300) { // 30 seconds
+        console.error('[OpenCV] Polling gave up after 300 attempts');
+        clearTimeout(timeout);
+        opencvPromise = null;
+        reject(new Error('OpenCV.js failed to initialize — try refreshing'));
+        return;
+      }
+      if (window.cv && window.cv.Mat) {
+        doResolve(window.cv as OpenCV);
+      } else {
+        if (attempts % 50 === 0) {
+          console.log(`[OpenCV] Polling attempt ${attempts}, cv type:`, typeof window.cv, 
+            'cv.Mat:', window.cv?.Mat ? 'yes' : 'no');
+        }
+        setTimeout(() => poll(attempts + 1), 100);
+      }
     };
 
     dispatchProgress('downloading');
 
+    // Create and load script
+    const script = document.createElement('script');
+    script.src = 'https://docs.opencv.org/4.x/opencv.js';
+    script.async = true;
+
     script.onload = () => {
+      console.log('[OpenCV] Script loaded. cv type:', typeof window.cv);
       dispatchProgress('initializing');
       
-      // OpenCV 4.x onload: window.cv may be a Module factory or already ready
-      const checkReady = (attempts: number) => {
-        if (attempts > 200) { // 20 seconds of polling
-          clearTimeout(timeout);
-          opencvPromise = null;
-          reject(new Error('OpenCV.js failed to initialize'));
-          return;
-        }
-        if (window.cv && window.cv.Mat) {
-          clearTimeout(timeout);
-          dispatchProgress('ready');
-          resolve(window.cv);
-        } else {
-          setTimeout(() => checkReady(attempts + 1), 100);
-        }
-      };
-      
-      // If cv['onRuntimeInitialized'] callback pattern is used
-      if (window.cv && typeof window.cv === 'object' && !window.cv.Mat) {
-        const origOnInit = window.cv['onRuntimeInitialized'];
-        window.cv['onRuntimeInitialized'] = () => {
-          if (origOnInit) origOnInit();
-          clearTimeout(timeout);
-          dispatchProgress('ready');
-          resolve(window.cv);
-        };
-        // Also poll as fallback
-        setTimeout(() => checkReady(0), 100);
-      } else {
-        checkReady(0);
-      }
+      // Start polling as the primary mechanism
+      // onRuntimeInitialized may or may not fire depending on the build
+      poll(0);
     };
 
-    script.onerror = () => {
+    script.onerror = (e) => {
+      console.error('[OpenCV] Script load error:', e);
       clearTimeout(timeout);
       opencvPromise = null;
-      reject(new Error('Failed to load OpenCV.js — check your connection'));
+      reject(new Error('Failed to download OpenCV.js — check your connection'));
     };
 
     document.head.appendChild(script);
