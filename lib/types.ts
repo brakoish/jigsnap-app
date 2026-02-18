@@ -52,3 +52,21 @@ export interface ProcessingParams {
   cannyHigh: number;
   epsilon: number;
 }
+
+// State for draggable paper corners
+export interface DraggablePaperCorners {
+  corners: Point[];
+  activeCornerIndex: number | null;
+  isDragging: boolean;
+}
+
+// State for interactive contour editing
+export interface EditableContour {
+  points: Point[];
+  activePointIndex: number | null;
+  isDragging: boolean;
+  isAddingPoint: boolean;
+}
+
+// Detection method type
+export type DetectionMethod = 'auto' | 'manual' | 'skip';

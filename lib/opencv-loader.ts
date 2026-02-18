@@ -103,7 +103,7 @@ export function safeDelete(...mats: any[]) {
   }
 }
 
-export function imageToCanvas(img: HTMLImageElement, maxDim: number = 1024): HTMLCanvasElement {
+export function imageToCanvas(img: HTMLImageElement, maxDim: number = 2048): HTMLCanvasElement {
   const canvas = document.createElement('canvas');
   let w = img.naturalWidth || img.width;
   let h = img.naturalHeight || img.height;
@@ -122,7 +122,7 @@ export function imageToCanvas(img: HTMLImageElement, maxDim: number = 1024): HTM
   return canvas;
 }
 
-export function getImageScale(img: HTMLImageElement, maxDim: number = 1024): number {
+export function getImageScale(img: HTMLImageElement, maxDim: number = 2048): number {
   const w = img.naturalWidth || img.width;
   const h = img.naturalHeight || img.height;
   if (w > maxDim || h > maxDim) {

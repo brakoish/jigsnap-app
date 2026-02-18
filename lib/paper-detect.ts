@@ -104,14 +104,14 @@ export async function detectPaper(
       const rect = cv.boundingRect(contour);
       const aspect = Math.min(rect.width, rect.height) / Math.max(rect.width, rect.height);
 
-      // Check aspect ratio similarity to paper
+      // Check aspect ratio similarity to paper (more lenient)
       const aspectDiff = Math.abs(aspect - targetAspect);
-      if (aspectDiff > 0.15) continue; // aspect ratio too different
+      if (aspectDiff > 0.3) continue; // aspect ratio too different
 
-      // Check rectangularity: contour area vs bounding rect area
+      // Check rectangularity: contour area vs bounding rect area (more lenient)
       const rectArea = rect.width * rect.height;
       const rectangularity = area / rectArea;
-      if (rectangularity < 0.7) continue; // not rectangular enough
+      if (rectangularity < 0.5) continue; // not rectangular enough
 
       // Score: bigger area + better rectangularity + better aspect match
       const score = (area / totalPixels) * rectangularity * (1 - aspectDiff);
