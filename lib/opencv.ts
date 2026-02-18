@@ -72,7 +72,7 @@ export async function loadOpenCV(): Promise<OpenCV> {
     // Load the script
     await new Promise<void>((resolve, reject) => {
       const script = document.createElement('script');
-      script.src = 'https://docs.opencv.org/4.x/opencv.js';
+      script.src = '/opencv.js';
       script.async = true;
       script.onload = () => resolve();
       script.onerror = () => reject(new Error('Failed to download OpenCV.js'));
