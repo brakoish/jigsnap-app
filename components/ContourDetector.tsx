@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Loader2, RefreshCw, ChevronDown, ChevronUp, Plus, Eye, EyeOff, ZoomIn, ZoomOut, Maximize, Grid3X3, Undo2, Redo2 } from 'lucide-react';
+import { Loader2, RefreshCw, ChevronDown, ChevronUp, Plus, Eye, EyeOff, ZoomIn, ZoomOut, Maximize, Grid3X3, Undo2, Redo2, Layers } from 'lucide-react';
 import { detectAllContours, simplifyContour, offsetContour, warpPerspective, getDefaultProcessingParams } from '@/lib/contour';
 import { detectPaper } from '@/lib/paper-detect';
 import type { Contour, ContourCandidate, A4Paper, ProcessingParams, Point } from '@/lib/types';
@@ -48,6 +48,9 @@ export default function ContourDetector({ imageUrl, onContourDetected, onA4Detec
   const [showGrid, setShowGrid] = useState(true);
   const [gridSizeMm, setGridSizeMm] = useState(10); // 10mm grid by default
   const [paperSize, setPaperSize] = useState<'letter' | 'a4'>('letter');
+  
+  // Before/after comparison
+  const [showProcessed, setShowProcessed] = useState(true);
 
   // Expose pixelsPerMm setter for parent
   useEffect(() => {
@@ -401,6 +404,12 @@ export default function ContourDetector({ imageUrl, onContourDetected, onA4Detec
     // Helper: image coords to scaled-canvas coords
     const s = (p: Point) => ({ x: p.x * baseScale, y: p.y * baseScale });
     
+    // If not showing processed view, just show the original image
+    if (!showProcessed) {
+      ctx.restore();
+      return;
+    }
+    
     // Draw grid
     if (showGrid && pixelsPerMmRef.current > 0) {
       const gridPx = gridSizeMm * pixelsPerMmRef.current * baseScale;
@@ -523,7 +532,7 @@ export default function ContourDetector({ imageUrl, onContourDetected, onA4Detec
     }
 
     ctx.restore();
-  }, [contours, selectedIndex, editablePoints, paperCorners, showPaper, noPaper, mode, draggingIdx, dragTarget, getBaseScale, zoom, panOffset, offsetMm, showGrid, gridSizeMm]);
+  }, [contours, selectedIndex, editablePoints, paperCorners, showPaper, noPaper, mode, draggingIdx, dragTarget, getBaseScale, zoom, panOffset, offsetMm, showGrid, gridSizeMm, showProcessed]);
 
   useEffect(() => { draw(); }, [draw]);
 
@@ -964,6 +973,16 @@ export default function ContourDetector({ imageUrl, onContourDetected, onA4Detec
           >
             <Grid3X3 className="w-3.5 h-3.5" />
             Grid
+          </button>
+          <button
+            onClick={() => setShowProcessed(p => !p)}
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg transition-colors ${
+              showProcessed ? 'bg-cyan-600 text-white' : 'bg-zinc-700 text-zinc-300 hover:bg-zinc-600'
+            }`}
+            title="Toggle processed view"
+          >
+            <Layers className="w-3.5 h-3.5" />
+            {showProcessed ? 'Processed' : 'Original'}
           </button>
         </div>
       </div>
