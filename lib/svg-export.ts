@@ -28,6 +28,15 @@ export function generateSVG(
     })
     .join(' ') + ' Z';
   
+  // Generate hole paths if present
+  const holePaths = contour.holes?.map(hole => {
+    return hole.map((p, i) => {
+      const mmX = (p.x - centerX) / pixelsPerMm;
+      const mmY = (p.y - centerY) / pixelsPerMm;
+      return `${i === 0 ? 'M' : 'L'} ${mmX.toFixed(3)} ${mmY.toFixed(3)}`;
+    }).join(' ') + ' Z';
+  }) || [];
+  
   // Crosshair size
   const crosshairSize = 5;
   const crosshairOffset = 2;
@@ -76,6 +85,9 @@ export function generateSVG(
   
   <!-- Object cutout -->
   <path d="${contourPathMm}" class="cut-line"/>
+  
+  <!-- Hole cutouts -->
+  ${holePaths.map(hp => `<path d="${hp}" class="cut-line"/>`).join('\n  ')}
   
   <!-- Scale bar -->
   ${scaleBar}

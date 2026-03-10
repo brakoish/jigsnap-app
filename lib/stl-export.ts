@@ -77,35 +77,34 @@ export function generateSTL(
     });
   }
   
-  // 2. Top face (rectangle with hole - through-cut)
-  const outerFlat = outerRect.flatMap(p => [p.x, p.y]);
-  const contourFlat = contourMm.flatMap(p => [p.x, p.y]);
-  const holeIndices = [contourFlat.length / 2];
-  const combined = [...outerFlat, ...contourFlat];
+  // 2. Top face (rectangle with holes - through-cut)
+  // Build vertex list: outer rect + main contour + all holes
+  const vertices: Point[] = [...outerRect, ...contourMm];
+  const holeIndices: number[] = [outerRect.length + contourMm.length]; // Start of first hole
   
-  const topIndices = earcut(combined, holeIndices, 2);
+  if (contour.holes && contour.holes.length > 0) {
+    for (const hole of contour.holes) {
+      const holeMm = hole.map(p => ({
+        x: (p.x - centerX) / pixelsPerMm,
+        y: (p.y - centerY) / pixelsPerMm
+      }));
+      holeIndices.push(vertices.length);
+      vertices.push(...holeMm);
+    }
+  }
+  
+  const flatVertices = vertices.flatMap(p => [p.x, p.y]);
+  const topIndices = earcut(flatVertices, holeIndices, 2);
+  
   const topZ = thickness;
   for (let i = 0; i < topIndices.length; i += 3) {
     const i0 = topIndices[i];
     const i1 = topIndices[i + 1];
     const i2 = topIndices[i + 2];
     
-    let p0: Point, p1: Point, p2: Point;
-    if (i0 < outerRect.length) {
-      p0 = outerRect[i0];
-    } else {
-      p0 = contourMm[i0 - outerRect.length];
-    }
-    if (i1 < outerRect.length) {
-      p1 = outerRect[i1];
-    } else {
-      p1 = contourMm[i1 - outerRect.length];
-    }
-    if (i2 < outerRect.length) {
-      p2 = outerRect[i2];
-    } else {
-      p2 = contourMm[i2 - outerRect.length];
-    }
+    const p0 = vertices[i0];
+    const p1 = vertices[i1];
+    const p2 = vertices[i2];
     
     triangles.push({
       v1: { x: p0.x, y: p0.y, z: topZ },
@@ -149,6 +148,33 @@ export function generateSTL(
       { x: p2.x, y: p2.y, z: 0 },
       n
     );
+  }
+  
+  // 5. Side walls of holes (through-cut)
+  if (contour.holes && contour.holes.length > 0) {
+    for (const hole of contour.holes) {
+      const holeMm = hole.map(p => ({
+        x: (p.x - centerX) / pixelsPerMm,
+        y: (p.y - centerY) / pixelsPerMm
+      }));
+      
+      for (let i = 0; i < holeMm.length; i++) {
+        const j = (i + 1) % holeMm.length;
+        const p1 = holeMm[i];
+        const p2 = holeMm[j];
+        
+        const edge = { x: p2.x - p1.x, y: p2.y - p1.y, z: 0 };
+        const n = normalize({ x: edge.y, y: -edge.x, z: 0 }); // Reverse normal for holes
+        
+        addQuad(
+          { x: p1.x, y: p1.y, z: 0 },
+          { x: p1.x, y: p1.y, z: topZ },
+          { x: p2.x, y: p2.y, z: topZ },
+          { x: p2.x, y: p2.y, z: 0 },
+          n
+        );
+      }
+    }
   }
   
   // Write binary STL

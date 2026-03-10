@@ -290,6 +290,94 @@ export async function detectAllContours(
   }
 }
 
+// Detect holes within a contour region
+// This is a simplified approach - looks for dark regions inside the object
+export async function detectHoles(
+  imageElement: HTMLImageElement,
+  outerContour: Point[]
+): Promise<Point[][]> {
+  console.log('[contour] detectHoles starting...');
+  await loadOpenCV();
+  const cv = getCv();
+
+  const canvas = imageToCanvas(imageElement);
+  const scale = 1 / getImageScale(imageElement);
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let src: any, gray: any, mask: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const holes: Point[][] = [];
+
+  try {
+    src = cv.imread(canvas);
+    gray = new cv.Mat();
+    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+
+    // Create mask from outer contour
+    mask = new cv.Mat.zeros(gray.rows, gray.cols, cv.CV_8UC1);
+    const contourMat = cv.matFromArray(outerContour.length, 1, cv.CV_32SC2, 
+      outerContour.flatMap(p => [p.x / scale, p.y / scale]));
+    
+    // Fill the outer contour
+    const fillColor = new cv.Scalar(255);
+    cv.drawContours(mask, new cv.MatVector().push_back(contourMat), 0, fillColor, -1);
+
+    // Mask the grayscale image
+    const maskedGray = new cv.Mat();
+    cv.bitwise_and(gray, mask, maskedGray);
+
+    // Find contours within the masked region using adaptive threshold
+    const thresh = new cv.Mat();
+    cv.adaptiveThreshold(maskedGray, thresh, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 11, 2);
+
+    // Find contours
+    const contours = new cv.MatVector();
+    const hierarchy = new cv.Mat();
+    cv.findContours(thresh, contours, hierarchy, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE);
+
+    // Filter contours that are likely holes (inside the object, reasonable size)
+    const outerArea = cv.contourArea(contourMat);
+    const minHoleArea = outerArea * 0.01; // At least 1% of object
+    const maxHoleArea = outerArea * 0.5;  // At most 50% of object
+
+    for (let i = 0; i < contours.size(); i++) {
+      const c = contours.get(i);
+      const area = cv.contourArea(c);
+      
+      if (area >= minHoleArea && area <= maxHoleArea) {
+        // Simplify the hole contour
+        const perimeter = cv.arcLength(c, true);
+        const epsilon = 0.01 * perimeter;
+        const approx = new cv.Mat();
+        cv.approxPolyDP(c, approx, epsilon, true);
+        
+        if (approx.rows >= 3) {
+          const points: Point[] = [];
+          for (let j = 0; j < approx.rows; j++) {
+            points.push({
+              x: Math.round(approx.data32S[j * 2] * scale),
+              y: Math.round(approx.data32S[j * 2 + 1] * scale)
+            });
+          }
+          holes.push(points);
+        }
+        safeDelete(approx);
+      }
+    }
+
+    safeDelete(contourMat, maskedGray, thresh, contours, hierarchy);
+
+    console.log(`[contour] Found ${holes.length} holes`);
+    return holes;
+
+  } catch (err) {
+    console.error('[contour] ERROR in detectHoles:', err);
+    return [];
+  } finally {
+    safeDelete(src, gray, mask);
+  }
+}
+
 // Legacy detectContour function
 export async function detectContour(
   imageElement: HTMLImageElement | HTMLCanvasElement,

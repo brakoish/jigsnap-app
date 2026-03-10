@@ -6,6 +6,7 @@ export interface Point {
 export interface Contour {
   points: Point[];
   area: number;
+  holes?: Point[][];
 }
 
 export interface ContourCandidate {
