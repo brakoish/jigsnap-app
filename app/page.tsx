@@ -26,13 +26,23 @@ export default function LandingPage() {
       </header>
 
       {/* Hero */}
-      <section className="py-20 px-4">
-        <div className="max-w-4xl mx-auto text-center">
+      <section className="relative py-20 px-4 overflow-hidden">
+        {/* Background Image */}
+        <div className="absolute inset-0 z-0">
+          <img 
+            src="/hero-laser-engraving.png" 
+            alt="Laser engraving" 
+            className="w-full h-full object-cover opacity-30"
+          />
+          <div className="absolute inset-0 bg-gradient-to-r from-zinc-950 via-zinc-950/80 to-transparent" />
+        </div>
+        
+        <div className="relative z-10 max-w-4xl mx-auto text-center">
           <h1 className="text-5xl md:text-6xl font-bold text-white mb-6">
             Laser Jigs in{" "}
             <span className="text-cyan-400">3 Clicks</span>
           </h1>
-          <p className="text-xl text-zinc-400 mb-8 max-w-2xl mx-auto">
+          <p className="text-xl text-zinc-300 mb-8 max-w-2xl mx-auto">
             Snap a photo of your object. Auto-detect the outline. Export SVG/STL for laser cutting. 
             No CAD skills required.
           </p>
@@ -45,12 +55,12 @@ export default function LandingPage() {
             </Link>
             <a
               href="#how-it-works"
-              className="px-8 py-4 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-xl transition-colors font-semibold text-lg"
+              className="px-8 py-4 bg-zinc-800/80 hover:bg-zinc-700 text-zinc-300 rounded-xl transition-colors font-semibold text-lg"
             >
               See How It Works
             </a>
           </div>
-          <p className="text-sm text-zinc-500 mt-4">Free tier: 3 jigs/month. No credit card required.</p>
+          <p className="text-sm text-zinc-400 mt-4">Free tier: 3 jigs/month. No credit card required.</p>
         </div>
       </section>
 
@@ -64,18 +74,21 @@ export default function LandingPage() {
               icon={Camera}
               title="Snap a Photo"
               description="Place your object on white paper and take a photo from above. We'll auto-detect the paper for scale calibration."
+              image="/step-1-photo.png"
             />
             <Step
               number={2}
               icon={Scan}
               title="Auto-Detect Outline"
               description="Our computer vision engine finds the object outline instantly. Fine-tune with the interactive editor if needed."
+              image="/step-2-detect.png"
             />
             <Step
               number={3}
               icon={Download}
               title="Export & Cut"
               description="Download SVG for laser cutting or STL for 3D printing. Import directly into LightBurn, Cura, or your favorite software."
+              image="/step-3-jig.png"
             />
           </div>
         </div>
@@ -182,9 +195,14 @@ export default function LandingPage() {
   );
 }
 
-function Step({ number, icon: Icon, title, description }: { number: number; icon: React.ElementType; title: string; description: string }) {
+function Step({ number, icon: Icon, title, description, image }: { number: number; icon: React.ElementType; title: string; description: string; image?: string }) {
   return (
     <div className="text-center">
+      {image && (
+        <div className="mb-6 rounded-2xl overflow-hidden border border-zinc-800 bg-zinc-900">
+          <img src={image} alt={title} className="w-full h-48 object-cover" />
+        </div>
+      )}
       <div className="w-16 h-16 mx-auto mb-6 rounded-2xl bg-cyan-900/30 border border-cyan-800 flex items-center justify-center">
         <Icon className="w-8 h-8 text-cyan-400" />
       </div>
