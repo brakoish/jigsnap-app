@@ -1,79 +1,12 @@
-'use client';
+import Link from "next/link";
+import { Camera, Scan, Download, Sparkles, Check } from "lucide-react";
 
-import React, { useState, useCallback } from 'react';
-import { Camera, Scan, Settings, Download, Sparkles } from 'lucide-react';
-import ImageUpload from '@/components/ImageUpload';
-import ContourDetector from '@/components/ContourDetector';
-import ScaleCalibration from '@/components/ScaleCalibration';
-import JigPreview from '@/components/JigPreview';
-import ThreeDPreview from '@/components/ThreeDPreview';
-import ExportPanel from '@/components/ExportPanel';
-import type { Contour, A4Paper, ScaleCalibration as ScaleCalibrationType, JigConfig } from '@/lib/types';
-
-type Step = 1 | 2 | 3 | 4;
-
-export default function Home() {
-  const [currentStep, setCurrentStep] = useState<Step>(1);
-  const [imageUrl, setImageUrl] = useState<string | null>(null);
-  const [contour, setContour] = useState<Contour | null>(null);
-  const [a4Paper, setA4Paper] = useState<A4Paper | null>(null);
-  const [scaleCalibration, setScaleCalibration] = useState<ScaleCalibrationType | null>(null);
-  const [jigConfig, setJigConfig] = useState<JigConfig | null>(null);
-  const [contourBounds, setContourBounds] = useState<{ width: number; height: number } | null>(null);
-  const [previewTab, setPreviewTab] = useState<'2d' | '3d'>('2d');
-
-  const handleImageUpload = useCallback((url: string) => {
-    setImageUrl(url);
-    setCurrentStep(2);
-  }, []);
-
-  const handleRetake = useCallback(() => {
-    if (imageUrl) {
-      URL.revokeObjectURL(imageUrl);
-    }
-    setImageUrl(null);
-    setContour(null);
-    setA4Paper(null);
-    setCurrentStep(1);
-  }, [imageUrl]);
-
-  const handleContourDetected = useCallback((detectedContour: Contour, imgElement: HTMLImageElement) => {
-    setContour(detectedContour);
-    
-    // Calculate bounds
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    detectedContour.points.forEach(p => {
-      minX = Math.min(minX, p.x);
-      minY = Math.min(minY, p.y);
-      maxX = Math.max(maxX, p.x);
-      maxY = Math.max(maxY, p.y);
-    });
-    
-    setContourBounds({
-      width: maxX - minX,
-      height: maxY - minY
-    });
-  }, []);
-
-  const handleA4Detected = useCallback((paper: A4Paper | null) => {
-    setA4Paper(paper);
-  }, []);
-
-  const canProceedToStep3 = contour !== null && contourBounds !== null;
-  const canProceedToStep4 = scaleCalibration !== null && jigConfig !== null;
-
-  const steps = [
-    { num: 1, icon: Camera, label: 'Upload' },
-    { num: 2, icon: Scan, label: 'Detect' },
-    { num: 3, icon: Settings, label: 'Configure' },
-    { num: 4, icon: Download, label: 'Export' },
-  ];
-
+export default function LandingPage() {
   return (
     <div className="min-h-screen bg-zinc-950">
       {/* Header */}
       <header className="border-b border-zinc-800 bg-zinc-900/50 backdrop-blur-sm sticky top-0 z-50">
-        <div className="max-w-4xl mx-auto px-4 py-4">
+        <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="p-2 bg-cyan-600 rounded-lg">
               <Sparkles className="w-5 h-5 text-white" />
@@ -83,218 +16,199 @@ export default function Home() {
               <p className="text-xs text-zinc-400">Laser Engraving Jig Generator</p>
             </div>
           </div>
+          <Link
+            href="/app"
+            className="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg transition-colors font-medium"
+          >
+            Try Free →
+          </Link>
         </div>
       </header>
 
-      <main className="max-w-4xl mx-auto px-4 py-8">
-        {/* Step Indicator */}
-        <div className="mb-8">
-          <div className="flex items-center justify-between">
-            {steps.map((step, index) => {
-              const Icon = step.icon;
-              const isActive = currentStep >= step.num;
-              const isCurrent = currentStep === step.num;
-              
-              return (
-                <div key={step.num} className="flex items-center flex-1 last:flex-initial">
-                  <button
-                    onClick={() => {
-                      if (step.num === 1) setCurrentStep(1);
-                      if (step.num === 2 && imageUrl) setCurrentStep(2);
-                      if (step.num === 3 && canProceedToStep3) setCurrentStep(3);
-                      if (step.num === 4 && canProceedToStep4) setCurrentStep(4);
-                    }}
-                    disabled={
-                      (step.num === 2 && !imageUrl) ||
-                      (step.num === 3 && !canProceedToStep3) ||
-                      (step.num === 4 && !canProceedToStep4)
-                    }
-                    className={`
-                      relative flex items-center gap-2 px-3 py-2 rounded-lg transition-all
-                      ${isCurrent 
-                        ? 'bg-cyan-600 text-white' 
-                        : isActive 
-                          ? 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700' 
-                          : 'bg-zinc-900 text-zinc-600 cursor-not-allowed'
-                      }
-                    `}
-                  >
-                    <Icon className="w-4 h-4" />
-                    <span className="hidden sm:inline text-sm font-medium">{step.label}</span>
-                  </button>
-                  {index < steps.length - 1 && (
-                    <div className={`
-                      hidden sm:block flex-1 h-0.5 mx-2
-                      ${currentStep > step.num ? 'bg-cyan-600' : 'bg-zinc-800'}
-                    `} />
-                  )}
-                </div>
-              );
-            })}
+      {/* Hero */}
+      <section className="py-20 px-4">
+        <div className="max-w-4xl mx-auto text-center">
+          <h1 className="text-5xl md:text-6xl font-bold text-white mb-6">
+            Laser Jigs in{" "}
+            <span className="text-cyan-400">3 Clicks</span>
+          </h1>
+          <p className="text-xl text-zinc-400 mb-8 max-w-2xl mx-auto">
+            Snap a photo of your object. Auto-detect the outline. Export SVG/STL for laser cutting. 
+            No CAD skills required.
+          </p>
+          <div className="flex flex-col sm:flex-row gap-4 justify-center">
+            <Link
+              href="/app"
+              className="px-8 py-4 bg-cyan-600 hover:bg-cyan-500 text-white rounded-xl transition-colors font-semibold text-lg"
+            >
+              Start Free →
+            </Link>
+            <a
+              href="#how-it-works"
+              className="px-8 py-4 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-xl transition-colors font-semibold text-lg"
+            >
+              See How It Works
+            </a>
+          </div>
+          <p className="text-sm text-zinc-500 mt-4">Free tier: 3 jigs/month. No credit card required.</p>
+        </div>
+      </section>
+
+      {/* How It Works */}
+      <section id="how-it-works" className="py-20 px-4 border-t border-zinc-800">
+        <div className="max-w-6xl mx-auto">
+          <h2 className="text-3xl font-bold text-white text-center mb-16">How It Works</h2>
+          <div className="grid md:grid-cols-3 gap-8">
+            <Step
+              number={1}
+              icon={Camera}
+              title="Snap a Photo"
+              description="Place your object on white paper and take a photo from above. We'll auto-detect the paper for scale calibration."
+            />
+            <Step
+              number={2}
+              icon={Scan}
+              title="Auto-Detect Outline"
+              description="Our computer vision engine finds the object outline instantly. Fine-tune with the interactive editor if needed."
+            />
+            <Step
+              number={3}
+              icon={Download}
+              title="Export & Cut"
+              description="Download SVG for laser cutting or STL for 3D printing. Import directly into LightBurn, Cura, or your favorite software."
+            />
           </div>
         </div>
+      </section>
 
-        {/* Step Content */}
-        <div className="animate-fade-in">
-          {currentStep === 1 && (
-            <div className="space-y-6">
-              <div className="text-center mb-8">
-                <h2 className="text-2xl font-semibold text-white mb-2">Upload Photo</h2>
-                <p className="text-zinc-400">
-                  Take a photo of your object on white paper (US Letter or A4) for automatic scale detection
-                </p>
-              </div>
-              <div className="max-w-md mx-auto">
-                <ImageUpload 
-                  onImageUpload={handleImageUpload}
-                  currentImage={imageUrl}
-                  onRetake={handleRetake}
-                />
-              </div>
-              <div className="text-center text-sm text-zinc-500">
-                <p>Tips for best results:</p>
-                <ul className="mt-2 space-y-1">
-                  <li>• Use good lighting with minimal shadows</li>
-                  <li>• Place object on white paper for scale</li>
-                  <li>• Take photo from directly above</li>
-                </ul>
-              </div>
-            </div>
-          )}
+      {/* Features */}
+      <section className="py-20 px-4 border-t border-zinc-800 bg-zinc-900/30">
+        <div className="max-w-6xl mx-auto">
+          <h2 className="text-3xl font-bold text-white text-center mb-16">Features</h2>
+          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+            <Feature title="Auto Scale Detection" description="Place on US Letter or A4 paper — we calculate exact dimensions automatically." />
+            <Feature title="Interactive Editor" description="Zoom, pan, and fine-tune contours with point-level precision." />
+            <Feature title="SVG Export" description="Clean vector output with alignment crosshairs for LightBurn compatibility." />
+            <Feature title="STL Export" description="3D printable jigs with through-cut holes, ready for your printer." />
+            <Feature title="Offset Control" description="Add clearance for material thickness or tight fits." />
+            <Feature title="Privacy First" description="All processing happens in your browser. Your photos never leave your device." />
+          </div>
+        </div>
+      </section>
 
-          {currentStep === 2 && imageUrl && (
-            <div className="space-y-6">
-              <div className="text-center mb-8">
-                <h2 className="text-2xl font-semibold text-white mb-2">Detect Object</h2>
-                <p className="text-zinc-400">
-                  Adjust the parameters to accurately detect your object&apos;s outline
-                </p>
-              </div>
-              <ContourDetector
-                imageUrl={imageUrl}
-                onContourDetected={handleContourDetected}
-                onA4Detected={handleA4Detected}
-              />
-              {canProceedToStep3 && (
-                <button
-                  onClick={() => setCurrentStep(3)}
-                  className="w-full py-3 bg-cyan-600 hover:bg-cyan-500 text-white font-medium rounded-lg transition-colors"
-                >
-                  Continue to Configuration →
-                </button>
-              )}
-            </div>
-          )}
-
-          {currentStep === 3 && contour && contourBounds && (
-            <div className="space-y-6">
-              <div className="text-center mb-8">
-                <h2 className="text-2xl font-semibold text-white mb-2">Scale & Configure</h2>
-                <p className="text-zinc-400">
-                  Verify scale and configure your jig settings
-                </p>
-              </div>
-              <ScaleCalibration
-                a4Paper={a4Paper}
-                contourBounds={contourBounds}
-                onCalibrationChange={setScaleCalibration}
-                onConfigChange={setJigConfig}
-              />
-              {canProceedToStep4 && (
-                <button
-                  onClick={() => setCurrentStep(4)}
-                  className="w-full py-3 bg-cyan-600 hover:bg-cyan-500 text-white font-medium rounded-lg transition-colors"
-                >
-                  Preview & Export →
-                </button>
-              )}
-            </div>
-          )}
-
-          {currentStep === 4 && contour && contourBounds && scaleCalibration && jigConfig && (
-            <div className="space-y-6">
-              <div className="text-center mb-8">
-                <h2 className="text-2xl font-semibold text-white mb-2">Preview & Export</h2>
-                <p className="text-zinc-400">
-                  Preview your jig and export for laser cutting or 3D printing
-                </p>
-              </div>
-
-              {/* Preview Tabs */}
-              <div className="flex gap-2 p-1 bg-zinc-800 rounded-lg mb-6">
-                <button
-                  onClick={() => setPreviewTab('2d')}
-                  className={`
-                    flex-1 py-2 text-sm font-medium rounded-md transition-all
-                    ${previewTab === '2d' 
-                      ? 'bg-zinc-700 text-white' 
-                      : 'text-zinc-400 hover:text-zinc-200'
-                    }
-                  `}
-                >
-                  2D Preview (SVG)
-                </button>
-                <button
-                  onClick={() => setPreviewTab('3d')}
-                  className={`
-                    flex-1 py-2 text-sm font-medium rounded-md transition-all
-                    ${previewTab === '3d' 
-                      ? 'bg-zinc-700 text-white' 
-                      : 'text-zinc-400 hover:text-zinc-200'
-                    }
-                  `}
-                >
-                  3D Preview (STL)
-                </button>
-              </div>
-
-              {/* Preview Content */}
-              <div className="grid md:grid-cols-2 gap-6">
-                <div>
-                  {previewTab === '2d' ? (
-                    <JigPreview
-                      contour={contour}
-                      pixelsPerMm={scaleCalibration.pixelsPerMm}
-                      config={jigConfig}
-                      contourBounds={contourBounds}
-                    />
-                  ) : (
-                    <ThreeDPreview
-                      contour={contour}
-                      pixelsPerMm={scaleCalibration.pixelsPerMm}
-                      config={jigConfig}
-                      contourBounds={contourBounds}
-                    />
-                  )}
-                </div>
-                <div>
-                  <ExportPanel
-                    contour={contour}
-                    pixelsPerMm={scaleCalibration.pixelsPerMm}
-                    config={jigConfig}
-                    contourBounds={contourBounds}
-                  />
-                </div>
-              </div>
-
-              {/* Start Over */}
-              <button
-                onClick={handleRetake}
-                className="w-full py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-medium rounded-lg transition-colors"
+      {/* Pricing */}
+      <section className="py-20 px-4 border-t border-zinc-800">
+        <div className="max-w-4xl mx-auto">
+          <h2 className="text-3xl font-bold text-white text-center mb-4">Simple Pricing</h2>
+          <p className="text-zinc-400 text-center mb-12">Start free, upgrade when you need more</p>
+          
+          <div className="grid md:grid-cols-2 gap-8">
+            {/* Free */}
+            <div className="p-8 rounded-2xl border border-zinc-700 bg-zinc-900/50">
+              <h3 className="text-xl font-semibold text-white mb-2">Free</h3>
+              <p className="text-zinc-400 mb-6">For hobbyists getting started</p>
+              <div className="text-4xl font-bold text-white mb-6">$0</div>
+              <ul className="space-y-3 mb-8">
+                <PricingItem>3 jigs per month</PricingItem>
+                <PricingItem>Basic contour detection</PricingItem>
+                <PricingItem>SVG & STL export</PricingItem>
+                <PricingItem>Community support</PricingItem>
+              </ul>
+              <Link
+                href="/app"
+                className="block w-full py-3 text-center bg-zinc-800 hover:bg-zinc-700 text-white rounded-lg transition-colors font-medium"
               >
-                ← Start Over with New Photo
+                Get Started
+              </Link>
+            </div>
+
+            {/* Pro */}
+            <div className="p-8 rounded-2xl border-2 border-cyan-600 bg-cyan-950/20 relative">
+              <div className="absolute -top-3 left-1/2 -translate-x-1/2 px-3 py-1 bg-cyan-600 text-white text-sm font-medium rounded-full">
+                Most Popular
+              </div>
+              <h3 className="text-xl font-semibold text-white mb-2">Pro</h3>
+              <p className="text-zinc-400 mb-6">For makers and small businesses</p>
+              <div className="text-4xl font-bold text-white mb-6">$8<span className="text-lg text-zinc-400">/mo</span></div>
+              <ul className="space-y-3 mb-8">
+                <PricingItem>Unlimited jigs</PricingItem>
+                <PricingItem>Advanced contour detection</PricingItem>
+                <PricingItem>Batch processing</PricingItem>
+                <PricingItem>Priority support</PricingItem>
+                <PricingItem>Early access to new features</PricingItem>
+              </ul>
+              <button
+                disabled
+                className="block w-full py-3 text-center bg-cyan-600 disabled:bg-cyan-800 disabled:cursor-not-allowed text-white rounded-lg transition-colors font-medium"
+              >
+                Coming Soon
               </button>
             </div>
-          )}
+          </div>
         </div>
-      </main>
+      </section>
+
+      {/* CTA */}
+      <section className="py-20 px-4 border-t border-zinc-800 bg-zinc-900/30">
+        <div className="max-w-2xl mx-auto text-center">
+          <h2 className="text-3xl font-bold text-white mb-4">Ready to make your first jig?</h2>
+          <p className="text-zinc-400 mb-8">Join makers who save hours on laser jig setup</p>
+          <Link
+            href="/app"
+            className="px-8 py-4 bg-cyan-600 hover:bg-cyan-500 text-white rounded-xl transition-colors font-semibold text-lg inline-block"
+          >
+            Start Free →
+          </Link>
+        </div>
+      </section>
 
       {/* Footer */}
-      <footer className="border-t border-zinc-800 mt-16">
-        <div className="max-w-4xl mx-auto px-4 py-6 text-center text-sm text-zinc-500">
-          JigSnap - Laser engraving jig generator with OpenCV.js and Three.js
+      <footer className="py-8 px-4 border-t border-zinc-800">
+        <div className="max-w-6xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="p-1.5 bg-cyan-600 rounded-lg">
+              <Sparkles className="w-4 h-4 text-white" />
+            </div>
+            <span className="text-zinc-400 text-sm">© 2026 JigSnap. All rights reserved.</span>
+          </div>
+          <div className="flex gap-6 text-sm text-zinc-500">
+            <a href="#" className="hover:text-zinc-300 transition-colors">Privacy</a>
+            <a href="#" className="hover:text-zinc-300 transition-colors">Terms</a>
+            <a href="mailto:Willbrako@gmail.com" className="hover:text-zinc-300 transition-colors">Contact</a>
+          </div>
         </div>
       </footer>
     </div>
+  );
+}
+
+function Step({ number, icon: Icon, title, description }: { number: number; icon: React.ElementType; title: string; description: string }) {
+  return (
+    <div className="text-center">
+      <div className="w-16 h-16 mx-auto mb-6 rounded-2xl bg-cyan-900/30 border border-cyan-800 flex items-center justify-center">
+        <Icon className="w-8 h-8 text-cyan-400" />
+      </div>
+      <div className="text-sm font-medium text-cyan-400 mb-2">Step {number}</div>
+      <h3 className="text-xl font-semibold text-white mb-3">{title}</h3>
+      <p className="text-zinc-400">{description}</p>
+    </div>
+  );
+}
+
+function Feature({ title, description }: { title: string; description: string }) {
+  return (
+    <div className="p-6 rounded-xl border border-zinc-800 bg-zinc-900/50">
+      <h3 className="font-semibold text-white mb-2">{title}</h3>
+      <p className="text-sm text-zinc-400">{description}</p>
+    </div>
+  );
+}
+
+function PricingItem({ children }: { children: React.ReactNode }) {
+  return (
+    <li className="flex items-center gap-2 text-zinc-300">
+      <Check className="w-4 h-4 text-cyan-400 flex-shrink-0" />
+      <span>{children}</span>
+    </li>
   );
 }

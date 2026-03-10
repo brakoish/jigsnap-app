@@ -14,12 +14,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "JigSnap - Laser Engraving Jig Generator",
-  description: "Generate SVG and STL jigs for laser engraving alignment from photos. Snap a photo, auto-detect outlines, export for cutting.",
-  openGraph: {
-    title: "JigSnap - Laser Engraving Jig Generator",
-    description: "Photo → outline → SVG/STL export in seconds",
-    type: "website",
-  },
+  description: "Generate SVG and STL jigs for laser engraving alignment from photos",
 };
 
 export default function RootLayout({
