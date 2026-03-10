@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Loader2, RefreshCw, ChevronDown, ChevronUp, Plus, Eye, EyeOff, ZoomIn, ZoomOut, Maximize, Grid3X3, Undo2, Redo2, Layers } from 'lucide-react';
+import { Loader2, RefreshCw, ChevronDown, ChevronUp, Plus, Eye, EyeOff, ZoomIn, ZoomOut, Maximize, Grid3X3, Undo2, Redo2, Layers, Eraser, Trash2 } from 'lucide-react';
 import { detectAllContours, simplifyContour, offsetContour, warpPerspective, getDefaultProcessingParams } from '@/lib/contour';
 import { detectPaper } from '@/lib/paper-detect';
 import type { Contour, ContourCandidate, A4Paper, ProcessingParams, Point } from '@/lib/types';
@@ -19,7 +19,7 @@ const PAPER_HIT_RADIUS = 24;
 const MIN_ZOOM = 0.5;
 const MAX_ZOOM = 8;
 
-type Mode = 'select' | 'edit-contour';
+type Mode = 'select' | 'edit-contour' | 'mask';
 
 export default function ContourDetector({ imageUrl, onContourDetected, onA4Detected }: ContourDetectorProps) {
   const [isLoading, setIsLoading] = useState(true);
@@ -51,6 +51,11 @@ export default function ContourDetector({ imageUrl, onContourDetected, onA4Detec
   
   // Before/after comparison
   const [showProcessed, setShowProcessed] = useState(true);
+  
+  // Masking state
+  const [maskPaths, setMaskPaths] = useState<Point[][]>([]);
+  const [currentMaskPath, setCurrentMaskPath] = useState<Point[]>([]);
+  const [isDrawingMask, setIsDrawingMask] = useState(false);
 
   // Expose pixelsPerMm setter for parent
   useEffect(() => {
@@ -531,8 +536,51 @@ export default function ContourDetector({ imageUrl, onContourDetected, onA4Detec
       }
     }
 
+    // Draw masks (darken excluded areas)
+    maskPaths.forEach(mask => {
+      if (mask.length < 3) return;
+      const mpts = mask.map(s);
+      ctx.beginPath();
+      ctx.moveTo(mpts[0].x, mpts[0].y);
+      for (let i = 1; i < mpts.length; i++) ctx.lineTo(mpts[i].x, mpts[i].y);
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+      ctx.fill();
+      ctx.strokeStyle = '#ef4444';
+      ctx.lineWidth = 2 / zoom;
+      ctx.setLineDash([4 / zoom, 4 / zoom]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    });
+
+    // Draw current mask being drawn
+    if (mode === 'mask' && currentMaskPath.length > 0) {
+      const mpts = currentMaskPath.map(s);
+      ctx.beginPath();
+      ctx.moveTo(mpts[0].x, mpts[0].y);
+      for (let i = 1; i < mpts.length; i++) ctx.lineTo(mpts[i].x, mpts[i].y);
+      if (!isDrawingMask && mpts.length > 2) {
+        ctx.closePath();
+      }
+      ctx.fillStyle = 'rgba(239, 68, 68, 0.3)';
+      ctx.fill();
+      ctx.strokeStyle = '#ef4444';
+      ctx.lineWidth = 2 / zoom;
+      ctx.setLineDash([4 / zoom, 4 / zoom]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      
+      // Draw points
+      mpts.forEach(p => {
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 4 / zoom, 0, Math.PI * 2);
+        ctx.fillStyle = '#ef4444';
+        ctx.fill();
+      });
+    }
+
     ctx.restore();
-  }, [contours, selectedIndex, editablePoints, paperCorners, showPaper, noPaper, mode, draggingIdx, dragTarget, getBaseScale, zoom, panOffset, offsetMm, showGrid, gridSizeMm, showProcessed]);
+  }, [contours, selectedIndex, editablePoints, paperCorners, showPaper, noPaper, mode, draggingIdx, dragTarget, getBaseScale, zoom, panOffset, offsetMm, showGrid, gridSizeMm, showProcessed, maskPaths, currentMaskPath, isDrawingMask]);
 
   useEffect(() => { draw(); }, [draw]);
 
@@ -656,6 +704,14 @@ export default function ContourDetector({ imageUrl, onContourDetected, onA4Detec
     e.preventDefault();
     const { clientX, clientY } = getClientPos(e);
     const imgPt = screenToImage(clientX, clientY);
+
+    // Mask mode: start drawing a mask polygon
+    if (mode === 'mask') {
+      setIsDrawingMask(true);
+      setCurrentMaskPath([imgPt]);
+      return;
+    }
+
     const handle = findHandle(imgPt);
 
     if (handle) {
@@ -710,6 +766,16 @@ export default function ContourDetector({ imageUrl, onContourDetected, onA4Detec
 
     const { clientX, clientY } = getClientPos(e);
 
+    // Handle mask drawing
+    if (mode === 'mask' && isDrawingMask) {
+      e.preventDefault();
+      const imgPt = screenToImage(clientX, clientY);
+      setCurrentMaskPath(prev => [...prev, imgPt]);
+      if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
+      animFrameRef.current = requestAnimationFrame(draw);
+      return;
+    }
+
     // Handle dragging
     if (draggingIdx !== null && dragTarget) {
       e.preventDefault();
@@ -740,18 +806,24 @@ export default function ContourDetector({ imageUrl, onContourDetected, onA4Detec
         y: panOffsetStartRef.current.y + (clientY - panStartRef.current.y),
       });
     }
-  }, [draggingIdx, dragTarget, isPanning, screenToImage, draw, zoom, zoomAt]);
+  }, [draggingIdx, dragTarget, isPanning, screenToImage, draw, zoom, zoomAt, mode, isDrawingMask]);
 
   const handlePointerUp = useCallback(() => {
     // Push to history when finishing a drag of contour points
     if (draggingIdx !== null && dragTarget === 'contour') {
       pushHistory(editablePoints);
     }
+    // Finish mask drawing
+    if (mode === 'mask' && isDrawingMask && currentMaskPath.length > 2) {
+      setMaskPaths(prev => [...prev, currentMaskPath]);
+      setCurrentMaskPath([]);
+      setIsDrawingMask(false);
+    }
     setDraggingIdx(null);
     setDragTarget(null);
     setIsPanning(false);
     lastPinchDistRef.current = 0;
-  }, [draggingIdx, dragTarget, editablePoints, pushHistory]);
+  }, [draggingIdx, dragTarget, editablePoints, pushHistory, mode, isDrawingMask, currentMaskPath]);
 
   const handleDoubleClick = useCallback((e: React.MouseEvent) => {
     if (mode !== 'edit-contour') return;
@@ -957,6 +1029,26 @@ export default function ContourDetector({ imageUrl, onContourDetected, onA4Detec
             Edit
           </button>
           <button
+            onClick={() => setMode(m => m === 'mask' ? 'select' : 'mask')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg transition-colors ${
+              mode === 'mask' ? 'bg-red-600 text-white' : 'bg-zinc-700 text-zinc-300 hover:bg-zinc-600'
+            }`}
+            title="Draw mask to exclude areas from detection"
+          >
+            <Eraser className="w-3.5 h-3.5" />
+            Mask
+          </button>
+          {maskPaths.length > 0 && (
+            <button
+              onClick={() => setMaskPaths([])}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-zinc-700 hover:bg-zinc-600 text-zinc-300 rounded-lg transition-colors"
+              title="Clear all masks"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              Clear
+            </button>
+          )}
+          <button
             onClick={handleRedetect}
             disabled={isProcessing}
             className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-zinc-700 hover:bg-zinc-600 disabled:opacity-50 rounded-lg transition-colors"
@@ -1020,6 +1112,16 @@ export default function ContourDetector({ imageUrl, onContourDetected, onA4Detec
           <p>• Click on an edge to <strong>add a point</strong> · Double-click a handle to <strong>delete it</strong></p>
           <p>• Scroll wheel or pinch to <strong>zoom</strong> · Drag empty space to <strong>pan</strong></p>
           <p>• <strong>Ctrl+Z</strong> to undo · <strong>Ctrl+Y</strong> or <strong>Ctrl+Shift+Z</strong> to redo</p>
+        </div>
+      )}
+
+      {/* Mask mode instructions */}
+      {mode === 'mask' && (
+        <div className="p-3 bg-red-900/20 border border-red-800 rounded-lg text-sm text-red-300 space-y-1">
+          <p><strong>Mask Mode:</strong> Draw polygons to exclude areas from detection</p>
+          <p>• <strong>Click and drag</strong> to draw a mask polygon around reflections or unwanted areas</p>
+          <p>• Release to complete the mask · Masks darken excluded regions</p>
+          <p>• Use <strong>Clear</strong> button to remove all masks · Re-detect after masking</p>
         </div>
       )}
 
