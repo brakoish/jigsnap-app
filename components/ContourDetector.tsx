@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Loader2, RefreshCw, ChevronDown, ChevronUp, Plus, Eye, EyeOff, ZoomIn, ZoomOut, Maximize, Grid3X3 } from 'lucide-react';
+import { Loader2, RefreshCw, ChevronDown, ChevronUp, Plus, Eye, EyeOff, ZoomIn, ZoomOut, Maximize, Grid3X3, Undo2, Redo2 } from 'lucide-react';
 import { detectAllContours, simplifyContour, offsetContour, warpPerspective, getDefaultProcessingParams } from '@/lib/contour';
 import { detectPaper } from '@/lib/paper-detect';
 import type { Contour, ContourCandidate, A4Paper, ProcessingParams, Point } from '@/lib/types';
@@ -67,6 +67,11 @@ export default function ContourDetector({ imageUrl, onContourDetected, onA4Detec
   // Drag state
   const [draggingIdx, setDraggingIdx] = useState<number | null>(null);
   const [dragTarget, setDragTarget] = useState<'contour' | 'paper' | null>(null);
+  
+  // Undo/Redo state
+  const [history, setHistory] = useState<Point[][]>([]);
+  const [historyIndex, setHistoryIndex] = useState(-1);
+  const isUndoingRef = useRef(false);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -244,6 +249,9 @@ export default function ContourDetector({ imageUrl, onContourDetected, onA4Detec
         setSelectedIndex(firstObj);
         const simplified = simplifyContour(detected[firstObj].points, simplifyLevel * 1.5);
         setEditablePoints(simplified.map(p => ({ ...p })));
+        // Initialize history with initial state
+        setHistory([simplified.map(p => ({ ...p }))]);
+        setHistoryIndex(0);
         onContourDetected({ points: simplified, area: detected[firstObj].area }, img);
       }
     } catch (err) {
@@ -252,6 +260,70 @@ export default function ContourDetector({ imageUrl, onContourDetected, onA4Detec
       setIsProcessing(false);
     }
   };
+  
+  // Add state to history
+  const pushHistory = useCallback((newPoints: Point[]) => {
+    if (isUndoingRef.current) return;
+    setHistory(prev => {
+      // Remove any future states if we're not at the end
+      const newHistory = prev.slice(0, historyIndex + 1);
+      newHistory.push(newPoints.map(p => ({ ...p })));
+      // Limit history to 50 states
+      if (newHistory.length > 50) {
+        newHistory.shift();
+      }
+      return newHistory;
+    });
+    setHistoryIndex(prev => Math.min(prev + 1, 49));
+  }, [historyIndex]);
+  
+  // Wrapper to set editable points and push to history
+  const setEditablePointsWithHistory = useCallback((newPoints: Point[]) => {
+    setEditablePoints(newPoints);
+    pushHistory(newPoints);
+  }, [pushHistory]);
+  
+  // Undo
+  const undo = useCallback(() => {
+    if (historyIndex > 0) {
+      isUndoingRef.current = true;
+      const newIndex = historyIndex - 1;
+      setHistoryIndex(newIndex);
+      setEditablePoints(history[newIndex].map(p => ({ ...p })));
+      setTimeout(() => { isUndoingRef.current = false; }, 0);
+    }
+  }, [history, historyIndex]);
+  
+  // Redo
+  const redo = useCallback(() => {
+    if (historyIndex < history.length - 1) {
+      isUndoingRef.current = true;
+      const newIndex = historyIndex + 1;
+      setHistoryIndex(newIndex);
+      setEditablePoints(history[newIndex].map(p => ({ ...p })));
+      setTimeout(() => { isUndoingRef.current = false; }, 0);
+    }
+  }, [history, historyIndex]);
+  
+  // Keyboard shortcuts for undo/redo
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+        e.preventDefault();
+        if (e.shiftKey) {
+          redo();
+        } else {
+          undo();
+        }
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key === 'y') {
+        e.preventDefault();
+        redo();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [undo, redo]);
 
   // Re-simplify when slider changes
   useEffect(() => {
@@ -589,6 +661,7 @@ export default function ContourDetector({ imageUrl, onContourDetected, onA4Detec
         const newPts = [...editablePoints];
         newPts.splice(edge.index, 0, edge.point);
         setEditablePoints(newPts);
+        pushHistory(newPts);
         return;
       }
     }
@@ -661,20 +734,26 @@ export default function ContourDetector({ imageUrl, onContourDetected, onA4Detec
   }, [draggingIdx, dragTarget, isPanning, screenToImage, draw, zoom, zoomAt]);
 
   const handlePointerUp = useCallback(() => {
+    // Push to history when finishing a drag of contour points
+    if (draggingIdx !== null && dragTarget === 'contour') {
+      pushHistory(editablePoints);
+    }
     setDraggingIdx(null);
     setDragTarget(null);
     setIsPanning(false);
     lastPinchDistRef.current = 0;
-  }, []);
+  }, [draggingIdx, dragTarget, editablePoints, pushHistory]);
 
   const handleDoubleClick = useCallback((e: React.MouseEvent) => {
     if (mode !== 'edit-contour') return;
     const imgPt = screenToImage(e.clientX, e.clientY);
     const handle = findHandle(imgPt);
     if (handle && handle.target === 'contour' && editablePoints.length > 3) {
-      setEditablePoints(prev => prev.filter((_, i) => i !== handle.index));
+      const newPts = editablePoints.filter((_, i) => i !== handle.index);
+      setEditablePoints(newPts);
+      pushHistory(newPts);
     }
-  }, [mode, screenToImage, findHandle, editablePoints]);
+  }, [mode, screenToImage, findHandle, editablePoints, pushHistory]);
 
   const handleRedetect = useCallback(async () => {
     if (imageRef.current) {
@@ -825,6 +904,26 @@ export default function ContourDetector({ imageUrl, onContourDetected, onA4Detec
             </button>
             {zoom !== 1 && <span className="text-xs text-zinc-500">{Math.round(zoom * 100)}%</span>}
           </div>
+          
+          {/* Undo/Redo */}
+          <div className="flex items-center gap-1 mr-2">
+            <button 
+              onClick={undo} 
+              disabled={historyIndex <= 0}
+              className="p-1.5 bg-zinc-700 hover:bg-zinc-600 disabled:opacity-30 disabled:cursor-not-allowed rounded text-zinc-300" 
+              title="Undo (Ctrl+Z)"
+            >
+              <Undo2 className="w-3.5 h-3.5" />
+            </button>
+            <button 
+              onClick={redo} 
+              disabled={historyIndex >= history.length - 1}
+              className="p-1.5 bg-zinc-700 hover:bg-zinc-600 disabled:opacity-30 disabled:cursor-not-allowed rounded text-zinc-300" 
+              title="Redo (Ctrl+Y or Ctrl+Shift+Z)"
+            >
+              <Redo2 className="w-3.5 h-3.5" />
+            </button>
+          </div>
           {!isWarped && paperCorners.length === 4 && (
             <button
               onClick={handleWarp}
@@ -901,6 +1000,7 @@ export default function ContourDetector({ imageUrl, onContourDetected, onA4Detec
           <p><strong>Edit Mode:</strong> Drag handles to refine the trace</p>
           <p>• Click on an edge to <strong>add a point</strong> · Double-click a handle to <strong>delete it</strong></p>
           <p>• Scroll wheel or pinch to <strong>zoom</strong> · Drag empty space to <strong>pan</strong></p>
+          <p>• <strong>Ctrl+Z</strong> to undo · <strong>Ctrl+Y</strong> or <strong>Ctrl+Shift+Z</strong> to redo</p>
         </div>
       )}
 
