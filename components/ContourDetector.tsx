@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Loader2, RefreshCw, ChevronDown, ChevronUp, Plus, Eye, EyeOff, ZoomIn, ZoomOut, Maximize } from 'lucide-react';
+import { Loader2, RefreshCw, ChevronDown, ChevronUp, Plus, Eye, EyeOff, ZoomIn, ZoomOut, Maximize, Grid3X3 } from 'lucide-react';
 import { detectAllContours, simplifyContour, offsetContour, warpPerspective, getDefaultProcessingParams } from '@/lib/contour';
 import { detectPaper } from '@/lib/paper-detect';
 import type { Contour, ContourCandidate, A4Paper, ProcessingParams, Point } from '@/lib/types';
@@ -43,6 +43,11 @@ export default function ContourDetector({ imageUrl, onContourDetected, onA4Detec
 
   // Zoom/pan state
   const [zoom, setZoom] = useState(1);
+  
+  // Grid state
+  const [showGrid, setShowGrid] = useState(true);
+  const [gridSizeMm, setGridSizeMm] = useState(10); // 10mm grid by default
+  const [paperSize, setPaperSize] = useState<'letter' | 'a4'>('letter');
 
   // Expose pixelsPerMm setter for parent
   useEffect(() => {
@@ -153,7 +158,7 @@ export default function ContourDetector({ imageUrl, onContourDetected, onA4Detec
 
         setLoadingStep('Detecting paper...');
         let paper: A4Paper | null = null;
-        try { paper = await detectPaper(img, 'letter'); } catch {}
+        try { paper = await detectPaper(img, paperSize); } catch {}
 
         if (paper && paper.corners.length === 4) {
           setPaperCorners(paper.corners.map(c => ({ ...c })));
@@ -166,9 +171,12 @@ export default function ContourDetector({ imageUrl, onContourDetected, onA4Detec
             const width = Math.max(...xs) - Math.min(...xs);
             const height = Math.max(...ys) - Math.min(...ys);
             
-            // Calculate pixels per mm (US Letter: 215.9mm x 279.4mm)
-            const paperWidthMm = 215.9;
-            const paperHeightMm = 279.4;
+            // Calculate pixels per mm based on paper size
+            const paperDims = paperSize === 'letter' 
+              ? { width: 215.9, height: 279.4 }
+              : { width: 210, height: 297 };
+            const paperWidthMm = paperDims.width;
+            const paperHeightMm = paperDims.height;
             const scale = Math.min(2048 / Math.max(width, height), 1);
             const destW = Math.round(width * scale);
             const destH = Math.round(height * scale);
@@ -320,6 +328,45 @@ export default function ContourDetector({ imageUrl, onContourDetected, onA4Detec
 
     // Helper: image coords to scaled-canvas coords
     const s = (p: Point) => ({ x: p.x * baseScale, y: p.y * baseScale });
+    
+    // Draw grid
+    if (showGrid && pixelsPerMmRef.current > 0) {
+      const gridPx = gridSizeMm * pixelsPerMmRef.current * baseScale;
+      if (gridPx > 10) { // Only draw if grid lines are far enough apart
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
+        ctx.lineWidth = 1 / zoom;
+        ctx.setLineDash([]);
+        
+        // Vertical lines
+        for (let x = 0; x <= imgW; x += gridPx) {
+          ctx.beginPath();
+          ctx.moveTo(x, 0);
+          ctx.lineTo(x, imgH);
+          ctx.stroke();
+        }
+        
+        // Horizontal lines
+        for (let y = 0; y <= imgH; y += gridPx) {
+          ctx.beginPath();
+          ctx.moveTo(0, y);
+          ctx.lineTo(imgW, y);
+          ctx.stroke();
+        }
+        
+        // Draw grid labels at intersections
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+        ctx.font = `${10 / zoom}px sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        
+        for (let x = 0; x <= imgW; x += gridPx) {
+          for (let y = 0; y <= imgH; y += gridPx) {
+            const label = `${Math.round(x / baseScale / pixelsPerMmRef.current)}`;
+            ctx.fillText(label, x + 10 / zoom, y + 10 / zoom);
+          }
+        }
+      }
+    }
 
     // Draw non-selected contours faintly
     contours.forEach((c, idx) => {
@@ -404,7 +451,7 @@ export default function ContourDetector({ imageUrl, onContourDetected, onA4Detec
     }
 
     ctx.restore();
-  }, [contours, selectedIndex, editablePoints, paperCorners, showPaper, noPaper, mode, draggingIdx, dragTarget, getBaseScale, zoom, panOffset, offsetMm]);
+  }, [contours, selectedIndex, editablePoints, paperCorners, showPaper, noPaper, mode, draggingIdx, dragTarget, getBaseScale, zoom, panOffset, offsetMm, showGrid, gridSizeMm]);
 
   useEffect(() => { draw(); }, [draw]);
 
@@ -709,7 +756,15 @@ export default function ContourDetector({ imageUrl, onContourDetected, onA4Detec
             <div className="w-2 h-2 bg-green-500 rounded-full" />
             <span className="text-green-400 text-sm">{isWarped ? 'Paper detected & auto-warped' : 'Paper detected — drag green corners to adjust'}</span>
           </div>
-          <div className="flex gap-2">
+          <div className="flex items-center gap-2">
+            <select
+              value={paperSize}
+              onChange={(e) => setPaperSize(e.target.value as 'letter' | 'a4')}
+              className="text-xs bg-zinc-800 text-zinc-300 border border-zinc-700 rounded px-2 py-1"
+            >
+              <option value="letter">US Letter</option>
+              <option value="a4">A4</option>
+            </select>
             <button onClick={() => setShowPaper(p => !p)} className="text-zinc-400 hover:text-white p-1">
               {showPaper ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
             </button>
@@ -726,9 +781,19 @@ export default function ContourDetector({ imageUrl, onContourDetected, onA4Detec
           </button>
         </div>
       ) : (
-        <div className="flex items-center gap-2 p-3 bg-zinc-800/50 border border-zinc-700 rounded-lg">
-          <div className="w-2 h-2 bg-zinc-500 rounded-full" />
-          <span className="text-zinc-400 text-sm">No paper detected — drag corners or enter scale manually</span>
+        <div className="flex items-center justify-between p-3 bg-zinc-800/50 border border-zinc-700 rounded-lg">
+          <div className="flex items-center gap-2">
+            <div className="w-2 h-2 bg-zinc-500 rounded-full" />
+            <span className="text-zinc-400 text-sm">No paper detected — drag corners or enter scale manually</span>
+          </div>
+          <select
+            value={paperSize}
+            onChange={(e) => setPaperSize(e.target.value as 'letter' | 'a4')}
+            className="text-xs bg-zinc-800 text-zinc-300 border border-zinc-700 rounded px-2 py-1"
+          >
+            <option value="letter">US Letter</option>
+            <option value="a4">A4</option>
+          </select>
         </div>
       )}
 
@@ -790,6 +855,16 @@ export default function ContourDetector({ imageUrl, onContourDetected, onA4Detec
           >
             <RefreshCw className={`w-3.5 h-3.5 ${isProcessing ? 'animate-spin' : ''}`} />
             Re-detect
+          </button>
+          <button
+            onClick={() => setShowGrid(g => !g)}
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg transition-colors ${
+              showGrid ? 'bg-cyan-600 text-white' : 'bg-zinc-700 text-zinc-300 hover:bg-zinc-600'
+            }`}
+            title="Toggle grid"
+          >
+            <Grid3X3 className="w-3.5 h-3.5" />
+            Grid
           </button>
         </div>
       </div>
