@@ -121,13 +121,13 @@ export default function Home() {
                   >
                     <Icon className="w-4 h-4" />
                     <span className="hidden sm:inline text-sm font-medium">{step.label}</span>
-                    {index < steps.length - 1 && (
-                      <div className={`
-                        absolute left-full top-1/2 w-full h-0.5 -translate-y-1/2 ml-2
-                        ${currentStep > step.num ? 'bg-cyan-600' : 'bg-zinc-800'}
-                      `} />
-                    )}
                   </button>
+                  {index < steps.length - 1 && (
+                    <div className={`
+                      hidden sm:block flex-1 h-0.5 mx-2
+                      ${currentStep > step.num ? 'bg-cyan-600' : 'bg-zinc-800'}
+                    `} />
+                  )}
                 </div>
               );
             })}

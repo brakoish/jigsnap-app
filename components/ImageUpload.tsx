@@ -11,13 +11,19 @@ interface ImageUploadProps {
 
 export default function ImageUpload({ onImageUpload, currentImage, onRetake }: ImageUploadProps) {
   const [isDragging, setIsDragging] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
 
   const handleFile = useCallback((file: File) => {
     if (file.type.startsWith('image/')) {
+      setIsLoading(true);
       const url = URL.createObjectURL(file);
-      onImageUpload(url, file);
+      // Small delay to show loading state for large images
+      requestAnimationFrame(() => {
+        onImageUpload(url, file);
+        setIsLoading(false);
+      });
     }
   }, [onImageUpload]);
 
@@ -88,8 +94,17 @@ export default function ImageUpload({ onImageUpload, currentImage, onRetake }: I
             ? 'border-cyan-500 bg-cyan-500/10' 
             : 'border-zinc-600 hover:border-zinc-500 hover:bg-zinc-800/50'
           }
+          ${isLoading ? 'opacity-50 pointer-events-none' : ''}
         `}
       >
+        {isLoading && (
+          <div className="absolute inset-0 flex items-center justify-center bg-zinc-900/50 rounded-xl">
+            <div className="flex flex-col items-center gap-2">
+              <div className="w-8 h-8 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin" />
+              <span className="text-sm text-zinc-400">Loading image...</span>
+            </div>
+          </div>
+        )}
         <div className={`
           p-4 rounded-full transition-colors
           ${isDragging ? 'bg-cyan-500/20' : 'bg-zinc-800'}

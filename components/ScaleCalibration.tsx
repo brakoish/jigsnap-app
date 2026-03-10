@@ -97,7 +97,7 @@ export default function ScaleCalibration({
               </p>
               <div className="mt-2 text-sm">
                 <span className="text-cyan-400">
-                  {(autoPxPerMm! / 10).toFixed(2)} px/mm
+                  {autoPxPerMm!.toFixed(2)} px/mm
                 </span>
                 <span className="text-zinc-500 ml-2">
                   ({Math.round(a4Paper.width)}×{Math.round(a4Paper.height)} px)
@@ -156,7 +156,7 @@ export default function ScaleCalibration({
                 </div>
                 <div className="text-sm">
                   <span className="text-zinc-500">Scale: </span>
-                  <span className="text-cyan-400">{(manualPixelsPerMm / 10).toFixed(2)} px/mm</span>
+                  <span className="text-cyan-400">{manualPixelsPerMm.toFixed(2)} px/mm</span>
                 </div>
               </div>
             )}

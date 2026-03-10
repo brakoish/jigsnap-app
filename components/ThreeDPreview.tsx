@@ -94,8 +94,17 @@ export default function ThreeDPreview({
 
     if (oldMesh) {
       scene.remove(oldMesh);
+      // Dispose geometry
       oldMesh.geometry.dispose();
+      // Dispose material
       (oldMesh.material as THREE.Material).dispose();
+      // Dispose wireframe children
+      oldMesh.children.forEach(child => {
+        if (child instanceof THREE.LineSegments) {
+          child.geometry.dispose();
+          (child.material as THREE.Material).dispose();
+        }
+      });
     }
 
     const jigSize = config.jigSizeMm;

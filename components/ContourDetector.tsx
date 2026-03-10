@@ -122,6 +122,15 @@ export default function ContourDetector({ imageUrl, onContourDetected, onA4Detec
     return () => window.removeEventListener('opencv-progress', handler as EventListener);
   }, []);
 
+  // Cleanup blob URLs on unmount
+  useEffect(() => {
+    return () => {
+      if (warpedImageUrl) {
+        URL.revokeObjectURL(warpedImageUrl);
+      }
+    };
+  }, [warpedImageUrl]);
+
   // Initial load
   useEffect(() => {
     const loadAndDetect = async () => {
@@ -170,8 +179,10 @@ export default function ContourDetector({ imageUrl, onContourDetected, onA4Detec
             const blob = await new Promise<Blob | null>((resolve) => warpedCanvas.toBlob(resolve, 'image/jpeg', 0.95));
             if (blob) {
               const url = URL.createObjectURL(blob);
-              if (warpedImageUrl) URL.revokeObjectURL(warpedImageUrl);
-              setWarpedImageUrl(url);
+              setWarpedImageUrl(prev => {
+                if (prev) URL.revokeObjectURL(prev);
+                return url;
+              });
               setIsWarped(true);
 
               const warpedImg = new Image();
@@ -507,6 +518,7 @@ export default function ContourDetector({ imageUrl, onContourDetected, onA4Detec
   const handlePointerDown = useCallback((e: React.MouseEvent | React.TouchEvent) => {
     // Pinch zoom (2 fingers)
     if ('touches' in e && e.touches.length === 2) {
+      e.preventDefault();
       const dx = e.touches[0].clientX - e.touches[1].clientX;
       const dy = e.touches[0].clientY - e.touches[1].clientY;
       lastPinchDistRef.current = Math.sqrt(dx * dx + dy * dy);
@@ -649,8 +661,10 @@ export default function ContourDetector({ imageUrl, onContourDetected, onA4Detec
       const blob = await new Promise<Blob | null>((resolve) => warpedCanvas.toBlob(resolve, 'image/jpeg', 0.95));
       if (blob) {
         const url = URL.createObjectURL(blob);
-        if (warpedImageUrl) URL.revokeObjectURL(warpedImageUrl);
-        setWarpedImageUrl(url);
+        setWarpedImageUrl(prev => {
+          if (prev) URL.revokeObjectURL(prev);
+          return url;
+        });
         setIsWarped(true);
 
         // Load warped image and detect
@@ -682,7 +696,7 @@ export default function ContourDetector({ imageUrl, onContourDetected, onA4Detec
       setIsProcessing(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [paperCorners, warpedImageUrl]);
+  }, [paperCorners]);
 
   const objectCount = contours.filter(c => !c.isPaper).length;
 

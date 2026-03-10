@@ -26,7 +26,8 @@ export default function ExportPanel({
     setIsExporting(true);
     const svg = generateSVG(contour, contourBounds, config, pixelsPerMm);
     const date = new Date().toISOString().split('T')[0];
-    downloadSVG(svg, `jigsnap-${date}.svg`);
+    const size = config.jigSizeMm;
+    downloadSVG(svg, `jigsnap-${size}mm-${date}.svg`);
     setIsExporting(false);
   }, [contour, contourBounds, config, pixelsPerMm]);
 
@@ -34,7 +35,8 @@ export default function ExportPanel({
     setIsExporting(true);
     const stl = generateSTL(contour, contourBounds, config, pixelsPerMm);
     const date = new Date().toISOString().split('T')[0];
-    downloadSTL(stl, `jigsnap-${date}.stl`);
+    const size = config.jigSizeMm;
+    downloadSTL(stl, `jigsnap-${size}mm-${date}.stl`);
     setIsExporting(false);
   }, [contour, contourBounds, config, pixelsPerMm]);
 
@@ -181,7 +183,7 @@ export default function ExportPanel({
           </div>
           <div className="flex justify-between">
             <span className="text-zinc-500">Scale</span>
-            <span className="text-zinc-300">{(pixelsPerMm / 10).toFixed(2)} px/mm</span>
+            <span className="text-zinc-300">{pixelsPerMm.toFixed(2)} px/mm</span>
           </div>
         </div>
       </div>
