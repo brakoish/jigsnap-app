@@ -2,9 +2,11 @@ import type { Point, Contour, ContourCandidate, ProcessingParams } from './types
 import { loadOpenCV, getCv, safeDelete, imageToCanvas, getImageScale } from './opencv-loader';
 
 // outline-app style settings
-const MIN_CONTOUR_AREA_RATIO = 0.001; // Min 0.1% of image area (catch smaller objects)
+const MIN_CONTOUR_AREA_RATIO = 0.005; // Min 0.5% of image area (ignore tiny noise)
 const MAX_CONTOUR_AREA_RATIO = 0.95; // Max 95% of image area
 const PAPER_AREA_THRESHOLD = 0.25; // Contours > 25% of image are likely paper
+const MIN_CONTOUR_POINTS = 8; // Minimum points for a valid contour
+const MAX_CONTOUR_POINTS = 200; // Maximum points before aggressive smoothing
 
 // Calculate IoU of two contours using bounding boxes
 function calculateBoundingBoxIoU(contourA: Point[], contourB: Point[]): number {
@@ -58,21 +60,25 @@ function smoothContour(cv: any, contour: any, maxDeviationPercent = 0.001): any 
 
 // Advanced contour smoothing with noise reduction
 function smoothContourAdvanced(cv: any, contour: any, imageWidth: number, imageHeight: number): any {
-  // First apply aggressive smoothing based on image size
   const perimeter = cv.arcLength(contour, true);
   const imageDiagonal = Math.sqrt(imageWidth * imageWidth + imageHeight * imageHeight);
   
-  // Adaptive epsilon: larger for bigger objects, smaller for detailed objects
-  // But keep a minimum to avoid jagged edges
-  const baseEpsilon = 0.002 * perimeter;
-  const minEpsilon = 0.001 * imageDiagonal; // Minimum smoothing based on image size
-  const epsilon = Math.max(baseEpsilon, minEpsilon);
+  // More aggressive smoothing for complex shapes
+  // Use 0.5% of perimeter for strong smoothing
+  const baseEpsilon = 0.005 * perimeter;
+  const minEpsilon = 0.002 * imageDiagonal;
+  let epsilon = Math.max(baseEpsilon, minEpsilon);
+  
+  // If contour has many points, be even more aggressive
+  if (contour.rows > MAX_CONTOUR_POINTS) {
+    epsilon = 0.01 * perimeter; // Very aggressive for noisy contours
+  }
   
   const smooth = new cv.Mat();
   cv.approxPolyDP(contour, smooth, epsilon, true);
   
   // If we got too few points, try with less aggressive smoothing
-  if (smooth.rows < 8 && contour.rows > 20) {
+  if (smooth.rows < MIN_CONTOUR_POINTS && contour.rows > MIN_CONTOUR_POINTS * 2) {
     const lessAggressiveEpsilon = epsilon * 0.5;
     cv.approxPolyDP(contour, smooth, lessAggressiveEpsilon, true);
   }
@@ -166,7 +172,8 @@ export async function detectAllContours(
       cv.GaussianBlur(gray, blurred, new cv.Size(15, 15), 0);
       
       cannyEdges = new cv.Mat();
-      cv.Canny(blurred, cannyEdges, 50, 150); // Medium thresholds (not too high, not too low)
+      // Higher thresholds to reduce noise, larger aperture for smoother edges
+      cv.Canny(blurred, cannyEdges, 80, 200, 5); // Higher thresholds, 5x5 Sobel
 
       cannyContours = new cv.MatVector();
       cannyHierarchy = new cv.Mat();
@@ -315,16 +322,23 @@ export async function detectAllContours(
 
     console.log(`[contour] Total contours before dedupe: ${allContours.length}`);
 
-    // Deduplicate: remove overlapping contours (IoU > 0.5)
+    // Deduplicate: merge overlapping contours (IoU > 0.3) and filter noise
     const uniqueContours: typeof allContours = [];
     for (const candidate of allContours) {
+      // Skip contours with too few points (noise)
+      if (candidate.contour.length < MIN_CONTOUR_POINTS) {
+        console.log(`[contour] Skipping small contour with ${candidate.contour.length} points`);
+        continue;
+      }
+      
       let isDuplicate = false;
       for (const existing of uniqueContours) {
         const iou = calculateBoundingBoxIoU(candidate.contour, existing.contour);
-        if (iou > 0.5) {
+        // Merge if significant overlap
+        if (iou > 0.3) {
           isDuplicate = true;
-          // Keep the one with more points
-          if (candidate.contour.length > existing.contour.length) {
+          // Keep the larger one (more likely to be the main object)
+          if (candidate.area > existing.area) {
             existing.contour = candidate.contour;
             existing.area = candidate.area;
             existing.method = candidate.method;

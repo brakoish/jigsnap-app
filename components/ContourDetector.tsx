@@ -19,7 +19,7 @@ const PAPER_HIT_RADIUS = 24;
 const MIN_ZOOM = 0.5;
 const MAX_ZOOM = 8;
 
-type Mode = 'select' | 'edit-contour' | 'mask' | 'erase';
+type Mode = 'select' | 'edit-contour' | 'mask' | 'erase' | 'add';
 
 export default function ContourDetector({ imageUrl, onContourDetected, onA4Detected }: ContourDetectorProps) {
   const [isLoading, setIsLoading] = useState(true);
@@ -60,6 +60,10 @@ export default function ContourDetector({ imageUrl, onContourDetected, onA4Detec
   // Erase state
   const [eraseRadius, setEraseRadius] = useState(20); // pixels in image space
   const [isErasing, setIsErasing] = useState(false);
+  
+  // Add state (like Photoshop quick selection +)
+  const [addRadius, setAddRadius] = useState(30); // pixels in image space
+  const [isAdding, setIsAdding] = useState(false);
 
   // Expose pixelsPerMm setter for parent
   useEffect(() => {
@@ -737,6 +741,22 @@ export default function ContourDetector({ imageUrl, onContourDetected, onA4Detec
       return;
     }
 
+    // Add mode: start adding points (like Photoshop quick selection +)
+    if (mode === 'add') {
+      setIsAdding(true);
+      // Find edge closest to cursor and add points along it
+      const edge = findClosestEdge(imgPt);
+      if (edge) {
+        // Add multiple points along the edge in the add radius
+        const newPts = [...editablePoints];
+        const insertIdx = edge.index;
+        // Add the edge point
+        newPts.splice(insertIdx, 0, edge.point);
+        setEditablePoints(newPts);
+      }
+      return;
+    }
+
     const handle = findHandle(imgPt);
 
     if (handle) {
@@ -818,6 +838,31 @@ export default function ContourDetector({ imageUrl, onContourDetected, onA4Detec
       return;
     }
 
+    // Handle adding points (like Photoshop quick selection +)
+    if (mode === 'add' && isAdding) {
+      e.preventDefault();
+      const imgPt = screenToImage(clientX, clientY);
+      const edge = findClosestEdge(imgPt);
+      if (edge) {
+        setEditablePoints(prev => {
+          // Check if we already have a point very close to this one
+          const tooClose = prev.some(p => {
+            const dx = p.x - edge.point.x;
+            const dy = p.y - edge.point.y;
+            return Math.sqrt(dx * dx + dy * dy) < 5; // Don't add if within 5px
+          });
+          if (tooClose) return prev;
+          
+          const newPts = [...prev];
+          newPts.splice(edge.index, 0, edge.point);
+          return newPts;
+        });
+      }
+      if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
+      animFrameRef.current = requestAnimationFrame(draw);
+      return;
+    }
+
     // Handle dragging
     if (draggingIdx !== null && dragTarget) {
       e.preventDefault();
@@ -848,7 +893,7 @@ export default function ContourDetector({ imageUrl, onContourDetected, onA4Detec
         y: panOffsetStartRef.current.y + (clientY - panStartRef.current.y),
       });
     }
-  }, [draggingIdx, dragTarget, isPanning, screenToImage, draw, zoom, zoomAt, mode, isDrawingMask, isErasing]);
+  }, [draggingIdx, dragTarget, isPanning, screenToImage, draw, zoom, zoomAt, mode, isDrawingMask, isErasing, isAdding, findClosestEdge]);
 
   const handlePointerUp = useCallback(() => {
     // Push to history when finishing a drag of contour points
@@ -866,11 +911,16 @@ export default function ContourDetector({ imageUrl, onContourDetected, onA4Detec
       pushHistory(editablePoints);
       setIsErasing(false);
     }
+    // Finish adding - push to history
+    if (mode === 'add' && isAdding) {
+      pushHistory(editablePoints);
+      setIsAdding(false);
+    }
     setDraggingIdx(null);
     setDragTarget(null);
     setIsPanning(false);
     lastPinchDistRef.current = 0;
-  }, [draggingIdx, dragTarget, editablePoints, pushHistory, mode, isDrawingMask, currentMaskPath, isErasing]);
+  }, [draggingIdx, dragTarget, editablePoints, pushHistory, mode, isDrawingMask, currentMaskPath, isErasing, isAdding]);
 
   const handleDoubleClick = useCallback((e: React.MouseEvent) => {
     if (mode !== 'edit-contour') return;
@@ -1076,11 +1126,21 @@ export default function ContourDetector({ imageUrl, onContourDetected, onA4Detec
             Edit
           </button>
           <button
+            onClick={() => setMode(m => m === 'add' ? 'select' : 'add')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg transition-colors ${
+              mode === 'add' ? 'bg-green-600 text-white' : 'bg-zinc-700 text-zinc-300 hover:bg-zinc-600'
+            }`}
+            title="Add points to contour (like Photoshop +)"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            Add
+          </button>
+          <button
             onClick={() => setMode(m => m === 'erase' ? 'select' : 'erase')}
             className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg transition-colors ${
               mode === 'erase' ? 'bg-orange-600 text-white' : 'bg-zinc-700 text-zinc-300 hover:bg-zinc-600'
             }`}
-            title="Erase unwanted contour points"
+            title="Erase unwanted contour points (like Photoshop -)"
           >
             <Eraser className="w-3.5 h-3.5" />
             Erase
@@ -1182,11 +1242,23 @@ export default function ContourDetector({ imageUrl, onContourDetected, onA4Detec
         </div>
       )}
 
+      {/* Add mode instructions */}
+      {mode === 'add' && (
+        <div className="p-3 bg-green-900/20 border border-green-800 rounded-lg space-y-3">
+          <div className="text-sm text-green-300 space-y-1">
+            <p><strong>Add Mode:</strong> Add points to refine the contour (like Photoshop Quick Selection +)</p>
+            <p>• <strong>Click and drag</strong> along the edge to add more detail points</p>
+            <p>• Use on curved areas where the contour needs more precision</p>
+            <p>• <strong>Ctrl+Z</strong> to undo if you add too many</p>
+          </div>
+        </div>
+      )}
+
       {/* Erase mode instructions and controls */}
       {mode === 'erase' && (
         <div className="p-3 bg-orange-900/20 border border-orange-800 rounded-lg space-y-3">
           <div className="text-sm text-orange-300 space-y-1">
-            <p><strong>Erase Mode:</strong> Remove unwanted contour points</p>
+            <p><strong>Erase Mode:</strong> Remove unwanted contour points (like Photoshop Quick Selection -)</p>
             <p>• <strong>Click and drag</strong> over points to erase them · Works like a brush</p>
             <p>• Adjust brush size below · <strong>Ctrl+Z</strong> to undo</p>
           </div>
