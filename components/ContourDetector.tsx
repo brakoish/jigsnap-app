@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Loader2, RefreshCw, ChevronDown, ChevronUp, Plus, Eye, EyeOff, ZoomIn, ZoomOut, Maximize, Grid3X3, Undo2, Redo2, Layers, Eraser, Trash2 } from 'lucide-react';
+import { Loader2, RefreshCw, ChevronDown, ChevronUp, Plus, Eye, EyeOff, ZoomIn, ZoomOut, Maximize, Grid3X3, Undo2, Redo2, Layers, Eraser, Trash2, Wand2 } from 'lucide-react';
 import { detectAllContours, simplifyContour, offsetContour, warpPerspective, getDefaultProcessingParams } from '@/lib/contour';
 import { detectPaper } from '@/lib/paper-detect';
 import type { Contour, ContourCandidate, A4Paper, ProcessingParams, Point } from '@/lib/types';
@@ -320,6 +320,41 @@ export default function ContourDetector({ imageUrl, onContourDetected, onA4Detec
       setTimeout(() => { isUndoingRef.current = false; }, 0);
     }
   }, [history, historyIndex]);
+
+  // Smooth contour - remove jagged edges
+  const smoothContourManual = useCallback(() => {
+    if (editablePoints.length < 8) return;
+    
+    // Calculate centroid
+    const centroid = editablePoints.reduce((acc, p) => ({ x: acc.x + p.x, y: acc.y + p.y }), { x: 0, y: 0 });
+    centroid.x /= editablePoints.length;
+    centroid.y /= editablePoints.length;
+    
+    // Sort points by angle from centroid
+    const sorted = [...editablePoints].sort((a, b) => {
+      const angleA = Math.atan2(a.y - centroid.y, a.x - centroid.x);
+      const angleB = Math.atan2(b.y - centroid.y, b.x - centroid.x);
+      return angleA - angleB;
+    });
+    
+    // Remove points that are too close together
+    const minDist = 15; // Minimum distance between points
+    const cleaned: Point[] = [];
+    for (const p of sorted) {
+      const tooClose = cleaned.some(cp => {
+        const dx = cp.x - p.x;
+        const dy = cp.y - p.y;
+        return Math.sqrt(dx * dx + dy * dy) < minDist;
+      });
+      if (!tooClose) cleaned.push(p);
+    }
+    
+    // Ensure we have enough points
+    if (cleaned.length >= 6) {
+      setEditablePoints(cleaned);
+      pushHistory(cleaned);
+    }
+  }, [editablePoints, pushHistory]);
   
   // Keyboard shortcuts for undo/redo
   useEffect(() => {
@@ -1116,6 +1151,15 @@ export default function ContourDetector({ imageUrl, onContourDetected, onA4Detec
           {isWarped && (
             <span className="text-xs text-amber-400 bg-amber-900/30 px-2 py-1 rounded">Warped</span>
           )}
+          <button
+            onClick={smoothContourManual}
+            disabled={editablePoints.length < 8}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-purple-600 hover:bg-purple-500 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-colors text-white"
+            title="Smooth jagged contour"
+          >
+            <Wand2 className="w-3.5 h-3.5" />
+            Smooth
+          </button>
           <button
             onClick={() => setMode(m => m === 'edit-contour' ? 'select' : 'edit-contour')}
             className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg transition-colors ${
