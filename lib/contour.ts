@@ -56,6 +56,74 @@ function smoothContour(cv: any, contour: any, maxDeviationPercent = 0.001): any 
   return smooth;
 }
 
+// Advanced contour smoothing with noise reduction
+function smoothContourAdvanced(cv: any, contour: any, imageWidth: number, imageHeight: number): any {
+  // First apply aggressive smoothing based on image size
+  const perimeter = cv.arcLength(contour, true);
+  const imageDiagonal = Math.sqrt(imageWidth * imageWidth + imageHeight * imageHeight);
+  
+  // Adaptive epsilon: larger for bigger objects, smaller for detailed objects
+  // But keep a minimum to avoid jagged edges
+  const baseEpsilon = 0.002 * perimeter;
+  const minEpsilon = 0.001 * imageDiagonal; // Minimum smoothing based on image size
+  const epsilon = Math.max(baseEpsilon, minEpsilon);
+  
+  const smooth = new cv.Mat();
+  cv.approxPolyDP(contour, smooth, epsilon, true);
+  
+  // If we got too few points, try with less aggressive smoothing
+  if (smooth.rows < 8 && contour.rows > 20) {
+    const lessAggressiveEpsilon = epsilon * 0.5;
+    cv.approxPolyDP(contour, smooth, lessAggressiveEpsilon, true);
+  }
+  
+  return smooth;
+}
+
+// Remove duplicate and collinear points from contour
+function cleanContourPoints(points: Point[]): Point[] {
+  if (points.length < 3) return points;
+  
+  const cleaned: Point[] = [];
+  const minDistance = 3; // Minimum distance between points (pixels)
+  const angleThreshold = 0.95; // Cosine of angle threshold (cos(10°) ≈ 0.985)
+  
+  for (let i = 0; i < points.length; i++) {
+    const prev = points[(i - 1 + points.length) % points.length];
+    const curr = points[i];
+    const next = points[(i + 1) % points.length];
+    
+    // Skip points that are too close to the previous kept point
+    if (cleaned.length > 0) {
+      const lastKept = cleaned[cleaned.length - 1];
+      const dist = Math.sqrt(
+        Math.pow(curr.x - lastKept.x, 2) + 
+        Math.pow(curr.y - lastKept.y, 2)
+      );
+      if (dist < minDistance) continue;
+    }
+    
+    // Check if point is collinear with neighbors
+    const v1x = curr.x - prev.x;
+    const v1y = curr.y - prev.y;
+    const v2x = next.x - curr.x;
+    const v2y = next.y - curr.y;
+    
+    const len1 = Math.sqrt(v1x * v1x + v1y * v1y);
+    const len2 = Math.sqrt(v2x * v2x + v2y * v2y);
+    
+    if (len1 > 0 && len2 > 0) {
+      const cosAngle = (v1x * v2x + v1y * v2y) / (len1 * len2);
+      // If angle is very flat (close to 180°), skip this point
+      if (cosAngle > angleThreshold) continue;
+    }
+    
+    cleaned.push(curr);
+  }
+  
+  return cleaned;
+}
+
 // Check if contour is top-level (no parent) - outline-app style
 function isTopLevelContour(i: number, hierarchy: any): boolean {
   const hierarchyValue = hierarchy.intPtr(0, i);
@@ -116,10 +184,10 @@ export async function detectAllContours(
         
         if (area >= imageArea * MIN_CONTOUR_AREA_RATIO && 
             area <= imageArea * MAX_CONTOUR_AREA_RATIO) {
-          // Smooth with 0.2% of perimeter (outline-app style)
-          const smoothed = smoothContour(cv, contour, 0.001);
+          // Use advanced smoothing for cleaner contours
+          const smoothed = smoothContourAdvanced(cv, contour, canvas.width, canvas.height);
           
-          const points: Point[] = [];
+          let points: Point[] = [];
           for (let j = 0; j < smoothed.rows; j++) {
             points.push({
               x: Math.round(smoothed.data32S[j * 2] * scale),
@@ -127,6 +195,9 @@ export async function detectAllContours(
             });
           }
           safeDelete(smoothed);
+          
+          // Clean up duplicate and collinear points
+          points = cleanContourPoints(points);
           
           if (points.length >= 3) {
             allContours.push({ contour: points, area: area * scale * scale, method: 'canny' });
@@ -218,9 +289,9 @@ export async function detectAllContours(
 
         if (area >= imageArea * MIN_CONTOUR_AREA_RATIO && 
             area <= imageArea * MAX_CONTOUR_AREA_RATIO) {
-          const smoothed = smoothContour(cv, contour, 0.001);
+          const smoothed = smoothContourAdvanced(cv, contour, canvas.width, canvas.height);
           
-          const points: Point[] = [];
+          let points: Point[] = [];
           for (let j = 0; j < smoothed.rows; j++) {
             points.push({
               x: Math.round(smoothed.data32S[j * 2] * scale),
@@ -228,6 +299,9 @@ export async function detectAllContours(
             });
           }
           safeDelete(smoothed);
+          
+          // Clean up duplicate and collinear points
+          points = cleanContourPoints(points);
 
           if (points.length >= 3) {
             allContours.push({ contour: points, area: area * scale * scale, method: 'binary' });
