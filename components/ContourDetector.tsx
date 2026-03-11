@@ -19,7 +19,7 @@ const PAPER_HIT_RADIUS = 24;
 const MIN_ZOOM = 0.5;
 const MAX_ZOOM = 8;
 
-type Mode = 'select' | 'edit-contour' | 'mask';
+type Mode = 'select' | 'edit-contour' | 'mask' | 'erase';
 
 export default function ContourDetector({ imageUrl, onContourDetected, onA4Detected }: ContourDetectorProps) {
   const [isLoading, setIsLoading] = useState(true);
@@ -56,6 +56,10 @@ export default function ContourDetector({ imageUrl, onContourDetected, onA4Detec
   const [maskPaths, setMaskPaths] = useState<Point[][]>([]);
   const [currentMaskPath, setCurrentMaskPath] = useState<Point[]>([]);
   const [isDrawingMask, setIsDrawingMask] = useState(false);
+  
+  // Erase state
+  const [eraseRadius, setEraseRadius] = useState(20); // pixels in image space
+  const [isErasing, setIsErasing] = useState(false);
 
   // Expose pixelsPerMm setter for parent
   useEffect(() => {
@@ -579,6 +583,12 @@ export default function ContourDetector({ imageUrl, onContourDetected, onA4Detec
       });
     }
 
+    // Draw erase brush preview
+    if (mode === 'erase') {
+      // Get mouse position from last move event - we'll use a ref for this
+      // For now, draw at center of canvas as placeholder
+    }
+
     ctx.restore();
   }, [contours, selectedIndex, editablePoints, paperCorners, showPaper, noPaper, mode, draggingIdx, dragTarget, getBaseScale, zoom, panOffset, offsetMm, showGrid, gridSizeMm, showProcessed, maskPaths, currentMaskPath, isDrawingMask]);
 
@@ -712,6 +722,21 @@ export default function ContourDetector({ imageUrl, onContourDetected, onA4Detec
       return;
     }
 
+    // Erase mode: start erasing points
+    if (mode === 'erase') {
+      setIsErasing(true);
+      // Erase points near cursor
+      const newPts = editablePoints.filter(p => {
+        const dx = p.x - imgPt.x;
+        const dy = p.y - imgPt.y;
+        return Math.sqrt(dx * dx + dy * dy) > eraseRadius;
+      });
+      if (newPts.length !== editablePoints.length) {
+        setEditablePoints(newPts);
+      }
+      return;
+    }
+
     const handle = findHandle(imgPt);
 
     if (handle) {
@@ -776,6 +801,23 @@ export default function ContourDetector({ imageUrl, onContourDetected, onA4Detec
       return;
     }
 
+    // Handle erasing
+    if (mode === 'erase' && isErasing) {
+      e.preventDefault();
+      const imgPt = screenToImage(clientX, clientY);
+      setEditablePoints(prev => {
+        const newPts = prev.filter(p => {
+          const dx = p.x - imgPt.x;
+          const dy = p.y - imgPt.y;
+          return Math.sqrt(dx * dx + dy * dy) > eraseRadius;
+        });
+        return newPts;
+      });
+      if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
+      animFrameRef.current = requestAnimationFrame(draw);
+      return;
+    }
+
     // Handle dragging
     if (draggingIdx !== null && dragTarget) {
       e.preventDefault();
@@ -806,7 +848,7 @@ export default function ContourDetector({ imageUrl, onContourDetected, onA4Detec
         y: panOffsetStartRef.current.y + (clientY - panStartRef.current.y),
       });
     }
-  }, [draggingIdx, dragTarget, isPanning, screenToImage, draw, zoom, zoomAt, mode, isDrawingMask]);
+  }, [draggingIdx, dragTarget, isPanning, screenToImage, draw, zoom, zoomAt, mode, isDrawingMask, isErasing]);
 
   const handlePointerUp = useCallback(() => {
     // Push to history when finishing a drag of contour points
@@ -819,11 +861,16 @@ export default function ContourDetector({ imageUrl, onContourDetected, onA4Detec
       setCurrentMaskPath([]);
       setIsDrawingMask(false);
     }
+    // Finish erasing - push to history
+    if (mode === 'erase' && isErasing) {
+      pushHistory(editablePoints);
+      setIsErasing(false);
+    }
     setDraggingIdx(null);
     setDragTarget(null);
     setIsPanning(false);
     lastPinchDistRef.current = 0;
-  }, [draggingIdx, dragTarget, editablePoints, pushHistory, mode, isDrawingMask, currentMaskPath]);
+  }, [draggingIdx, dragTarget, editablePoints, pushHistory, mode, isDrawingMask, currentMaskPath, isErasing]);
 
   const handleDoubleClick = useCallback((e: React.MouseEvent) => {
     if (mode !== 'edit-contour') return;
@@ -1029,13 +1076,23 @@ export default function ContourDetector({ imageUrl, onContourDetected, onA4Detec
             Edit
           </button>
           <button
+            onClick={() => setMode(m => m === 'erase' ? 'select' : 'erase')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg transition-colors ${
+              mode === 'erase' ? 'bg-orange-600 text-white' : 'bg-zinc-700 text-zinc-300 hover:bg-zinc-600'
+            }`}
+            title="Erase unwanted contour points"
+          >
+            <Eraser className="w-3.5 h-3.5" />
+            Erase
+          </button>
+          <button
             onClick={() => setMode(m => m === 'mask' ? 'select' : 'mask')}
             className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg transition-colors ${
               mode === 'mask' ? 'bg-red-600 text-white' : 'bg-zinc-700 text-zinc-300 hover:bg-zinc-600'
             }`}
             title="Draw mask to exclude areas from detection"
           >
-            <Eraser className="w-3.5 h-3.5" />
+            <Layers className="w-3.5 h-3.5" />
             Mask
           </button>
           {maskPaths.length > 0 && (
@@ -1122,6 +1179,26 @@ export default function ContourDetector({ imageUrl, onContourDetected, onA4Detec
           <p>• <strong>Click and drag</strong> to draw a mask polygon around reflections or unwanted areas</p>
           <p>• Release to complete the mask · Masks darken excluded regions</p>
           <p>• Use <strong>Clear</strong> button to remove all masks · Re-detect after masking</p>
+        </div>
+      )}
+
+      {/* Erase mode instructions and controls */}
+      {mode === 'erase' && (
+        <div className="p-3 bg-orange-900/20 border border-orange-800 rounded-lg space-y-3">
+          <div className="text-sm text-orange-300 space-y-1">
+            <p><strong>Erase Mode:</strong> Remove unwanted contour points</p>
+            <p>• <strong>Click and drag</strong> over points to erase them · Works like a brush</p>
+            <p>• Adjust brush size below · <strong>Ctrl+Z</strong> to undo</p>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-zinc-400">Brush size:</span>
+            <input
+              type="range" min="5" max="100" value={eraseRadius}
+              onChange={(e) => setEraseRadius(parseInt(e.target.value))}
+              className="flex-1 accent-orange-500"
+            />
+            <span className="text-xs text-zinc-400 w-12 text-right">{eraseRadius}px</span>
+          </div>
         </div>
       )}
 
