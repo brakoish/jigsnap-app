@@ -139,6 +139,125 @@ function isTopLevelContour(i: number, hierarchy: any): boolean {
   return true;
 }
 
+// Detect a single contour at a specific point (ToolTrace-style click-to-trace)
+export async function detectContourAtPoint(
+  imageElement: HTMLImageElement,
+  clickPoint: Point
+): Promise<Contour | null> {
+  console.log('[contour] detectContourAtPoint starting at', clickPoint);
+  await loadOpenCV();
+  const cv = getCv();
+
+  const canvas = imageToCanvas(imageElement);
+  const scale = 1 / getImageScale(imageElement);
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let src: any, gray: any, mask: any;
+
+  try {
+    src = cv.imread(canvas);
+    gray = new cv.Mat();
+    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+
+    // Create a region of interest around the click point
+    const roiSize = 200; // Size of region to analyze
+    const roiX = Math.max(0, Math.round(clickPoint.x / scale) - roiSize / 2);
+    const roiY = Math.max(0, Math.round(clickPoint.y / scale) - roiSize / 2);
+    const roiW = Math.min(roiSize, canvas.width - roiX);
+    const roiH = Math.min(roiSize, canvas.height - roiY);
+
+    if (roiW <= 0 || roiH <= 0) return null;
+
+    // Extract ROI
+    const roi = gray.roi(new cv.Rect(roiX, roiY, roiW, roiH));
+
+    // Apply strong bilateral filter to smooth while preserving edges
+    const filtered = new cv.Mat();
+    cv.bilateralFilter(roi, filtered, 15, 150, 150);
+
+    // Use adaptive threshold for better edge detection
+    const thresh = new cv.Mat();
+    cv.adaptiveThreshold(filtered, thresh, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 11, 2);
+
+    // Find contours in ROI
+    const contours = new cv.MatVector();
+    const hierarchy = new cv.Mat();
+    cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_TC89_L1);
+
+    // Find the contour closest to the center of ROI (where user clicked)
+    const roiCenterX = roiW / 2;
+    const roiCenterY = roiH / 2;
+    let bestContour: any = null;
+    let bestDistance = Infinity;
+
+    for (let i = 0; i < contours.size(); i++) {
+      const c = contours.get(i);
+      const area = cv.contourArea(c);
+      
+      // Skip tiny contours (noise)
+      if (area < 100) continue;
+
+      // Calculate centroid
+      const moments = cv.moments(c);
+      if (moments.m00 === 0) continue;
+      
+      const cx = moments.m10 / moments.m00;
+      const cy = moments.m01 / moments.m00;
+      
+      // Distance from ROI center
+      const dist = Math.sqrt(Math.pow(cx - roiCenterX, 2) + Math.pow(cy - roiCenterY, 2));
+      
+      if (dist < bestDistance) {
+        bestDistance = dist;
+        bestContour = c;
+      }
+    }
+
+    if (!bestContour) {
+      safeDelete(roi, filtered, thresh, contours, hierarchy);
+      return null;
+    }
+
+    // Smooth the contour
+    const smoothed = new cv.Mat();
+    const epsilon = 0.005 * cv.arcLength(bestContour, true);
+    cv.approxPolyDP(bestContour, smoothed, epsilon, true);
+
+    // Convert to points (adjust for ROI offset)
+    const points: Point[] = [];
+    for (let j = 0; j < smoothed.rows; j++) {
+      points.push({
+        x: Math.round((smoothed.data32S[j * 2] + roiX) * scale),
+        y: Math.round((smoothed.data32S[j * 2 + 1] + roiY) * scale)
+      });
+    }
+
+    safeDelete(roi, filtered, thresh, contours, hierarchy, smoothed);
+
+    if (points.length < 6) return null;
+
+    // Clean the points
+    const cleaned = cleanContourPoints(points);
+    
+    // Calculate area
+    let area = 0;
+    for (let i = 0; i < cleaned.length; i++) {
+      const j = (i + 1) % cleaned.length;
+      area += cleaned[i].x * cleaned[j].y;
+      area -= cleaned[j].x * cleaned[i].y;
+    }
+    area = Math.abs(area) / 2;
+
+    return { points: cleaned, area };
+
+  } catch (err) {
+    console.error('[contour] ERROR in detectContourAtPoint:', err);
+    return null;
+  } finally {
+    safeDelete(src, gray, mask);
+  }
+}
+
 // Detect contours using outline-app's approach
 export async function detectAllContours(
   imageElement: HTMLImageElement

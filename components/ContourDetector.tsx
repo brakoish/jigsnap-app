@@ -1,8 +1,8 @@
 'use client';
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Loader2, RefreshCw, ChevronDown, ChevronUp, Plus, Eye, EyeOff, ZoomIn, ZoomOut, Maximize, Grid3X3, Undo2, Redo2, Layers, Eraser, Trash2, Wand2 } from 'lucide-react';
-import { detectAllContours, simplifyContour, offsetContour, warpPerspective, getDefaultProcessingParams } from '@/lib/contour';
+import { Loader2, RefreshCw, ChevronDown, ChevronUp, Plus, Eye, EyeOff, ZoomIn, ZoomOut, Maximize, Grid3X3, Undo2, Redo2, Layers, Eraser, Trash2, Wand2, MousePointer } from 'lucide-react';
+import { detectAllContours, detectContourAtPoint, simplifyContour, offsetContour, warpPerspective, getDefaultProcessingParams } from '@/lib/contour';
 import { detectPaper } from '@/lib/paper-detect';
 import type { Contour, ContourCandidate, A4Paper, ProcessingParams, Point } from '@/lib/types';
 
@@ -19,7 +19,7 @@ const PAPER_HIT_RADIUS = 24;
 const MIN_ZOOM = 0.5;
 const MAX_ZOOM = 8;
 
-type Mode = 'select' | 'edit-contour' | 'mask' | 'erase' | 'add';
+type Mode = 'select' | 'edit-contour' | 'mask' | 'erase' | 'add' | 'click-to-trace';
 
 export default function ContourDetector({ imageUrl, onContourDetected, onA4Detected }: ContourDetectorProps) {
   const [isLoading, setIsLoading] = useState(true);
@@ -792,6 +792,27 @@ export default function ContourDetector({ imageUrl, onContourDetected, onA4Detec
       return;
     }
 
+    // Click-to-trace mode (ToolTrace style)
+    if (mode === 'click-to-trace') {
+      setIsProcessing(true);
+      detectContourAtPoint(imageRef.current!, imgPt).then(contour => {
+        if (contour) {
+          setEditablePoints(contour.points);
+          setSelectedIndex(0);
+          setContours([{
+            points: contour.points,
+            area: contour.area,
+            isPaper: false,
+            detectionMethod: 'click-to-trace'
+          }]);
+          pushHistory(contour.points);
+          onContourDetected(contour, imageRef.current!);
+        }
+        setIsProcessing(false);
+      });
+      return;
+    }
+
     const handle = findHandle(imgPt);
 
     if (handle) {
@@ -1170,6 +1191,16 @@ export default function ContourDetector({ imageUrl, onContourDetected, onA4Detec
             Edit
           </button>
           <button
+            onClick={() => setMode(m => m === 'click-to-trace' ? 'select' : 'click-to-trace')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg transition-colors ${
+              mode === 'click-to-trace' ? 'bg-pink-600 text-white' : 'bg-zinc-700 text-zinc-300 hover:bg-zinc-600'
+            }`}
+            title="Click on object to trace (ToolTrace style)"
+          >
+            <MousePointer className="w-3.5 h-3.5" />
+            Click Trace
+          </button>
+          <button
             onClick={() => setMode(m => m === 'add' ? 'select' : 'add')}
             className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-lg transition-colors ${
               mode === 'add' ? 'bg-green-600 text-white' : 'bg-zinc-700 text-zinc-300 hover:bg-zinc-600'
@@ -1273,6 +1304,16 @@ export default function ContourDetector({ imageUrl, onContourDetected, onA4Detec
           <p>• Click on an edge to <strong>add a point</strong> · Double-click a handle to <strong>delete it</strong></p>
           <p>• Scroll wheel or pinch to <strong>zoom</strong> · Drag empty space to <strong>pan</strong></p>
           <p>• <strong>Ctrl+Z</strong> to undo · <strong>Ctrl+Y</strong> or <strong>Ctrl+Shift+Z</strong> to redo</p>
+        </div>
+      )}
+
+      {/* Click-to-trace instructions */}
+      {mode === 'click-to-trace' && (
+        <div className="p-3 bg-pink-900/20 border border-pink-800 rounded-lg text-sm text-pink-300 space-y-1">
+          <p><strong>Click-to-Trace Mode:</strong> ToolTrace-style detection</p>
+          <p>• <strong>Click on any object</strong> in the image to trace just that object</p>
+          <p>• The AI will detect the outline around where you clicked</p>
+          <p>• More precise than auto-detect for complex objects</p>
         </div>
       )}
 

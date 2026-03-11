@@ -13,7 +13,7 @@ export interface ContourCandidate {
   points: Point[];
   area: number;
   isPaper: boolean;
-  detectionMethod: 'canny' | 'adaptive' | 'binary';
+  detectionMethod: 'canny' | 'adaptive' | 'binary' | 'click-to-trace';
 }
 
 export interface JigConfig {
