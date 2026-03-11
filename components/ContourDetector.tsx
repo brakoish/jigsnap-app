@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Loader2, RefreshCw, ChevronDown, ChevronUp, Plus, Eye, EyeOff, ZoomIn, ZoomOut, Maximize, Grid3X3, Undo2, Redo2, Layers, Eraser, Trash2, Wand2, MousePointer } from 'lucide-react';
-import { detectAllContours, detectContourAtPoint, simplifyContour, offsetContour, warpPerspective, getDefaultProcessingParams } from '@/lib/contour';
+import { detectContours, detectAtPoint, simplifyContour, offsetContour, warpPerspective, getDefaultProcessingParams } from '@/lib/contour';
 import { detectPaper } from '@/lib/paper-detect';
 import type { Contour, ContourCandidate, A4Paper, ProcessingParams, Point } from '@/lib/types';
 
@@ -258,17 +258,16 @@ export default function ContourDetector({ imageUrl, onContourDetected, onA4Detec
     setIsProcessing(true);
     setError(null);
     try {
-      const detected = await detectAllContours(img);
+      const detected = await detectContours(img);
       setContours(detected);
-      const firstObj = detected.findIndex(c => !c.isPaper);
-      if (firstObj !== -1) {
-        setSelectedIndex(firstObj);
-        const simplified = simplifyContour(detected[firstObj].points, simplifyLevel * 1.5);
-        setEditablePoints(simplified.map(p => ({ ...p })));
-        // Initialize history with initial state
-        setHistory([simplified.map(p => ({ ...p }))]);
+      // Select the largest non-paper contour
+      const objects = detected.filter(c => !c.isPaper);
+      if (objects.length > 0) {
+        setSelectedIndex(0);
+        setEditablePoints(objects[0].points.map(p => ({ ...p })));
+        setHistory([objects[0].points.map(p => ({ ...p }))]);
         setHistoryIndex(0);
-        onContourDetected({ points: simplified, area: detected[firstObj].area }, img);
+        onContourDetected({ points: objects[0].points, area: objects[0].area }, img);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Detection failed');
@@ -795,9 +794,9 @@ export default function ContourDetector({ imageUrl, onContourDetected, onA4Detec
     // Click-to-trace mode (ToolTrace style)
     if (mode === 'click-to-trace') {
       setIsProcessing(true);
-      detectContourAtPoint(imageRef.current!, imgPt).then(contour => {
+      detectAtPoint(imageRef.current!, imgPt).then(contour => {
         if (contour) {
-          setEditablePoints(contour.points);
+          setEditablePoints(contour.points.map(p => ({ ...p })));
           setSelectedIndex(0);
           setContours([{
             points: contour.points,

@@ -1,275 +1,121 @@
-import type { Point, Contour, ContourCandidate, ProcessingParams } from './types';
+import type { Point, Contour, ContourCandidate } from './types';
 import { loadOpenCV, getCv, safeDelete, imageToCanvas, getImageScale } from './opencv-loader';
 
-// outline-app style settings
-const MIN_CONTOUR_AREA_RATIO = 0.005; // Min 0.5% of image area (ignore tiny noise)
-const MAX_CONTOUR_AREA_RATIO = 0.95; // Max 95% of image area
-const PAPER_AREA_THRESHOLD = 0.25; // Contours > 25% of image are likely paper
-const MIN_CONTOUR_POINTS = 8; // Minimum points for a valid contour
-const MAX_CONTOUR_POINTS = 200; // Maximum points before aggressive smoothing
+// Simple, robust contour detection
+// Strategy: Preprocess → Edge detect → Find largest valid contour → Smooth
 
-// Calculate IoU of two contours using bounding boxes
-function calculateBoundingBoxIoU(contourA: Point[], contourB: Point[]): number {
-  const getBounds = (pts: Point[]) => ({
-    minX: Math.min(...pts.map(p => p.x)),
-    minY: Math.min(...pts.map(p => p.y)),
-    maxX: Math.max(...pts.map(p => p.x)),
-    maxY: Math.max(...pts.map(p => p.y))
-  });
-  
-  const a = getBounds(contourA);
-  const b = getBounds(contourB);
-  
-  const interMinX = Math.max(a.minX, b.minX);
-  const interMinY = Math.max(a.minY, b.minY);
-  const interMaxX = Math.min(a.maxX, b.maxX);
-  const interMaxY = Math.min(a.maxY, b.maxY);
-  
-  if (interMinX >= interMaxX || interMinY >= interMaxY) return 0;
-  
-  const interArea = (interMaxX - interMinX) * (interMaxY - interMinY);
-  const areaA = (a.maxX - a.minX) * (a.maxY - a.minY);
-  const areaB = (b.maxX - b.minX) * (b.maxY - b.minY);
-  const unionArea = areaA + areaB - interArea;
-  
-  return interArea / unionArea;
-}
+const MIN_AREA_RATIO = 0.01;  // At least 1% of image
+const MAX_AREA_RATIO = 0.9;   // At most 90% of image
 
-// Check if a point is inside a polygon
-export function pointInPolygon(point: Point, polygon: Point[]): boolean {
-  let inside = false;
-  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
-    const xi = polygon[i].x, yi = polygon[i].y;
-    const xj = polygon[j].x, yj = polygon[j].y;
-    if (((yi > point.y) !== (yj > point.y)) &&
-        (point.x < (xj - xi) * (point.y - yi) / (yj - yi) + xi)) {
-      inside = !inside;
-    }
-  }
-  return inside;
-}
-
-// Smooth contour using percentage of arc length (outline-app style)
-// Lower percentage = more aggressive smoothing
-function smoothContour(cv: any, contour: any, maxDeviationPercent = 0.001): any {
-  const smooth = new cv.Mat();
-  const accuracy = maxDeviationPercent * cv.arcLength(contour, true);
-  cv.approxPolyDP(contour, smooth, accuracy, true);
-  return smooth;
-}
-
-// Advanced contour smoothing with noise reduction
-function smoothContourAdvanced(cv: any, contour: any, imageWidth: number, imageHeight: number): any {
-  const perimeter = cv.arcLength(contour, true);
-  const imageDiagonal = Math.sqrt(imageWidth * imageWidth + imageHeight * imageHeight);
-  
-  // More aggressive smoothing for complex shapes
-  // Use 0.5% of perimeter for strong smoothing
-  const baseEpsilon = 0.005 * perimeter;
-  const minEpsilon = 0.002 * imageDiagonal;
-  let epsilon = Math.max(baseEpsilon, minEpsilon);
-  
-  // If contour has many points, be even more aggressive
-  if (contour.rows > MAX_CONTOUR_POINTS) {
-    epsilon = 0.01 * perimeter; // Very aggressive for noisy contours
-  }
-  
-  const smooth = new cv.Mat();
-  cv.approxPolyDP(contour, smooth, epsilon, true);
-  
-  // If we got too few points, try with less aggressive smoothing
-  if (smooth.rows < MIN_CONTOUR_POINTS && contour.rows > MIN_CONTOUR_POINTS * 2) {
-    const lessAggressiveEpsilon = epsilon * 0.5;
-    cv.approxPolyDP(contour, smooth, lessAggressiveEpsilon, true);
-  }
-  
-  return smooth;
-}
-
-// Remove duplicate and collinear points from contour
-function cleanContourPoints(points: Point[]): Point[] {
-  if (points.length < 3) return points;
-  
-  const cleaned: Point[] = [];
-  const minDistance = 3; // Minimum distance between points (pixels)
-  const angleThreshold = 0.95; // Cosine of angle threshold (cos(10°) ≈ 0.985)
-  
-  for (let i = 0; i < points.length; i++) {
-    const prev = points[(i - 1 + points.length) % points.length];
-    const curr = points[i];
-    const next = points[(i + 1) % points.length];
-    
-    // Skip points that are too close to the previous kept point
-    if (cleaned.length > 0) {
-      const lastKept = cleaned[cleaned.length - 1];
-      const dist = Math.sqrt(
-        Math.pow(curr.x - lastKept.x, 2) + 
-        Math.pow(curr.y - lastKept.y, 2)
-      );
-      if (dist < minDistance) continue;
-    }
-    
-    // Check if point is collinear with neighbors
-    const v1x = curr.x - prev.x;
-    const v1y = curr.y - prev.y;
-    const v2x = next.x - curr.x;
-    const v2y = next.y - curr.y;
-    
-    const len1 = Math.sqrt(v1x * v1x + v1y * v1y);
-    const len2 = Math.sqrt(v2x * v2x + v2y * v2y);
-    
-    if (len1 > 0 && len2 > 0) {
-      const cosAngle = (v1x * v2x + v1y * v2y) / (len1 * len2);
-      // If angle is very flat (close to 180°), skip this point
-      if (cosAngle > angleThreshold) continue;
-    }
-    
-    cleaned.push(curr);
-  }
-  
-  return cleaned;
-}
-
-// Check if contour is top-level (no parent) - outline-app style
-function isTopLevelContour(i: number, hierarchy: any): boolean {
-  const hierarchyValue = hierarchy.intPtr(0, i);
-  if (hierarchyValue.length >= 4) {
-    return hierarchyValue[3] === -1; // parent index == -1
-  }
-  return true;
-}
-
-// Detect a single contour at a specific point (ToolTrace-style click-to-trace)
-export async function detectContourAtPoint(
-  imageElement: HTMLImageElement,
-  clickPoint: Point
-): Promise<Contour | null> {
-  console.log('[contour] detectContourAtPoint starting at', clickPoint);
-  await loadOpenCV();
-  const cv = getCv();
-
-  const canvas = imageToCanvas(imageElement);
-  const scale = 1 / getImageScale(imageElement);
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let src: any, gray: any, mask: any;
-
-  try {
-    src = cv.imread(canvas);
-    gray = new cv.Mat();
-    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-
-    // Create a region of interest around the click point
-    const roiSize = 200; // Size of region to analyze
-    const roiX = Math.max(0, Math.round(clickPoint.x / scale) - roiSize / 2);
-    const roiY = Math.max(0, Math.round(clickPoint.y / scale) - roiSize / 2);
-    const roiW = Math.min(roiSize, canvas.width - roiX);
-    const roiH = Math.min(roiSize, canvas.height - roiY);
-
-    if (roiW <= 0 || roiH <= 0) return null;
-
-    // Extract ROI
-    const roi = gray.roi(new cv.Rect(roiX, roiY, roiW, roiH));
-
-    // Apply strong bilateral filter to smooth while preserving edges
-    const filtered = new cv.Mat();
-    cv.bilateralFilter(roi, filtered, 15, 150, 150);
-
-    // Use adaptive threshold for better edge detection
-    const thresh = new cv.Mat();
-    cv.adaptiveThreshold(filtered, thresh, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 11, 2);
-
-    // Find contours in ROI
-    const contours = new cv.MatVector();
-    const hierarchy = new cv.Mat();
-    cv.findContours(thresh, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_TC89_L1);
-
-    // Find the contour closest to the center of ROI (where user clicked)
-    const roiCenterX = roiW / 2;
-    const roiCenterY = roiH / 2;
-    let bestContour: any = null;
-    let bestDistance = Infinity;
-
-    for (let i = 0; i < contours.size(); i++) {
-      const c = contours.get(i);
-      const area = cv.contourArea(c);
-      
-      // Skip tiny contours (noise)
-      if (area < 100) continue;
-
-      // Calculate centroid
-      const moments = cv.moments(c);
-      if (moments.m00 === 0) continue;
-      
-      const cx = moments.m10 / moments.m00;
-      const cy = moments.m01 / moments.m00;
-      
-      // Distance from ROI center
-      const dist = Math.sqrt(Math.pow(cx - roiCenterX, 2) + Math.pow(cy - roiCenterY, 2));
-      
-      if (dist < bestDistance) {
-        bestDistance = dist;
-        bestContour = c;
-      }
-    }
-
-    if (!bestContour) {
-      safeDelete(roi, filtered, thresh, contours, hierarchy);
-      return null;
-    }
-
-    // Smooth the contour
-    const smoothed = new cv.Mat();
-    const epsilon = 0.005 * cv.arcLength(bestContour, true);
-    cv.approxPolyDP(bestContour, smoothed, epsilon, true);
-
-    // Convert to points (adjust for ROI offset)
-    const points: Point[] = [];
-    for (let j = 0; j < smoothed.rows; j++) {
-      points.push({
-        x: Math.round((smoothed.data32S[j * 2] + roiX) * scale),
-        y: Math.round((smoothed.data32S[j * 2 + 1] + roiY) * scale)
-      });
-    }
-
-    safeDelete(roi, filtered, thresh, contours, hierarchy, smoothed);
-
-    if (points.length < 6) return null;
-
-    // Clean the points
-    const cleaned = cleanContourPoints(points);
-    
-    // Calculate area
-    let area = 0;
-    for (let i = 0; i < cleaned.length; i++) {
-      const j = (i + 1) % cleaned.length;
-      area += cleaned[i].x * cleaned[j].y;
-      area -= cleaned[j].x * cleaned[i].y;
-    }
-    area = Math.abs(area) / 2;
-
-    return { points: cleaned, area };
-
-  } catch (err) {
-    console.error('[contour] ERROR in detectContourAtPoint:', err);
-    return null;
-  } finally {
-    safeDelete(src, gray, mask);
-  }
-}
-
-// Detect contours using outline-app's approach
-export async function detectAllContours(
+export async function detectContours(
   imageElement: HTMLImageElement
 ): Promise<ContourCandidate[]> {
-  console.log('[contour] detectAllContours starting...');
   await loadOpenCV();
   const cv = getCv();
-  console.log('[contour] OpenCV ready');
 
   const canvas = imageToCanvas(imageElement);
   const scale = 1 / getImageScale(imageElement);
   const imageArea = canvas.width * canvas.height;
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let src: any, gray: any, edges: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const contours: any[] = [];
+
+  try {
+    // Step 1: Load and convert to grayscale
+    src = cv.imread(canvas);
+    gray = new cv.Mat();
+    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+
+    // Step 2: Strong blur to remove noise (bristles, texture)
+    const blurred = new cv.Mat();
+    cv.GaussianBlur(gray, blurred, new cv.Size(21, 21), 0);
+
+    // Step 3: Canny edge detection (conservative thresholds)
+    edges = new cv.Mat();
+    cv.Canny(blurred, edges, 30, 100);
+
+    // Step 4: Dilate to connect broken edges
+    const dilated = new cv.Mat();
+    const kernel = cv.Mat.ones(5, 5, cv.CV_8U);
+    cv.dilate(edges, dilated, kernel);
+
+    // Step 5: Find contours
+    const contourVec = new cv.MatVector();
+    const hierarchy = new cv.Mat();
+    cv.findContours(dilated, contourVec, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
+    // Step 6: Filter and convert valid contours
+    for (let i = 0; i < contourVec.size(); i++) {
+      const c = contourVec.get(i);
+      const area = cv.contourArea(c);
+      const areaRatio = area / imageArea;
+
+      // Skip if too small or too large
+      if (areaRatio < MIN_AREA_RATIO || areaRatio > MAX_AREA_RATIO) continue;
+
+      // Smooth the contour (0.5% of perimeter)
+      const perimeter = cv.arcLength(c, true);
+      const epsilon = 0.005 * perimeter;
+      const smoothed = new cv.Mat();
+      cv.approxPolyDP(c, smoothed, epsilon, true);
+
+      // Convert to points
+      const points: Point[] = [];
+      for (let j = 0; j < smoothed.rows; j++) {
+        points.push({
+          x: Math.round(smoothed.data32S[j * 2] * scale),
+          y: Math.round(smoothed.data32S[j * 2 + 1] * scale)
+        });
+      }
+      safeDelete(smoothed);
+
+      // Skip if too few points
+      if (points.length < 6) continue;
+
+      contours.push({
+        points,
+        area: area * scale * scale,
+        isPaper: areaRatio > 0.3, // Large contours are probably paper
+        detectionMethod: 'simple'
+      });
+    }
+
+    safeDelete(blurred, dilated, kernel, contourVec, hierarchy);
+
+    // Sort by area (largest first)
+    contours.sort((a, b) => b.area - a.area);
+
+    return contours;
+
+  } catch (err) {
+    console.error('Detection error:', err);
+    return [];
+  } finally {
+    safeDelete(src, gray, edges);
+  }
+}
+
+// Click-to-detect: focused detection around a point
+export async function detectAtPoint(
+  imageElement: HTMLImageElement,
+  clickPoint: Point
+): Promise<Contour | null> {
+  await loadOpenCV();
+  const cv = getCv();
+
+  const canvas = imageToCanvas(imageElement);
+  const scale = 1 / getImageScale(imageElement);
+
+  // Region of interest (300px around click)
+  const roiSize = 300;
+  const cx = Math.round(clickPoint.x / scale);
+  const cy = Math.round(clickPoint.y / scale);
+  const x = Math.max(0, cx - roiSize / 2);
+  const y = Math.max(0, cy - roiSize / 2);
+  const w = Math.min(roiSize, canvas.width - x);
+  const h = Math.min(roiSize, canvas.height - y);
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let src: any, gray: any;
@@ -279,557 +125,235 @@ export async function detectAllContours(
     gray = new cv.Mat();
     cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
 
-    const allContours: { contour: Point[]; area: number; method: string }[] = [];
+    // Extract ROI
+    const roi = gray.roi(new cv.Rect(x, y, w, h));
 
-    // Method 1: Canny edge (outline-app style: higher thresholds)
-    console.log('[contour] Running Canny edge detection...');
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let cannyEdges: any, cannyContours: any, cannyHierarchy: any;
-    try {
-      // Bigger blur for smoother edges (15px like outline-app)
-      const blurred = new cv.Mat();
-      cv.GaussianBlur(gray, blurred, new cv.Size(15, 15), 0);
-      
-      cannyEdges = new cv.Mat();
-      // Higher thresholds to reduce noise, larger aperture for smoother edges
-      cv.Canny(blurred, cannyEdges, 80, 200, 5); // Higher thresholds, 5x5 Sobel
+    // Bilateral filter (edge-preserving smooth)
+    const filtered = new cv.Mat();
+    cv.bilateralFilter(roi, filtered, 15, 150, 150);
 
-      cannyContours = new cv.MatVector();
-      cannyHierarchy = new cv.Mat();
-      // Use RETR_TREE to get hierarchy, TC89_L1 for better edge following
-      cv.findContours(cannyEdges, cannyContours, cannyHierarchy, cv.RETR_TREE, cv.CHAIN_APPROX_TC89_L1);
-      
-      console.log(`[contour] Canny found ${cannyContours.size()} contours`);
-      
-      for (let i = 0; i < cannyContours.size(); i++) {
-        // Only top-level contours (outline-app style)
-        if (!isTopLevelContour(i, cannyHierarchy)) continue;
-        
-        const contour = cannyContours.get(i);
-        const area = cv.contourArea(contour);
-        
-        if (area >= imageArea * MIN_CONTOUR_AREA_RATIO && 
-            area <= imageArea * MAX_CONTOUR_AREA_RATIO) {
-          // Use advanced smoothing for cleaner contours
-          const smoothed = smoothContourAdvanced(cv, contour, canvas.width, canvas.height);
-          
-          let points: Point[] = [];
-          for (let j = 0; j < smoothed.rows; j++) {
-            points.push({
-              x: Math.round(smoothed.data32S[j * 2] * scale),
-              y: Math.round(smoothed.data32S[j * 2 + 1] * scale)
-            });
-          }
-          safeDelete(smoothed);
-          
-          // Clean up duplicate and collinear points
-          points = cleanContourPoints(points);
-          
-          if (points.length >= 3) {
-            allContours.push({ contour: points, area: area * scale * scale, method: 'canny' });
-          }
-        }
-      }
-      safeDelete(blurred);
-    } finally {
-      safeDelete(cannyEdges, cannyContours, cannyHierarchy);
-    }
+    // Adaptive threshold
+    const thresh = new cv.Mat();
+    cv.adaptiveThreshold(filtered, thresh, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 11, 2);
 
-    // Method 2: Adaptive threshold (outline-app style: smaller block, lower C)
-    console.log('[contour] Running adaptive threshold...');
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let adaptiveThresh: any, adaptiveContours: any, adaptiveHierarchy: any;
-    try {
-      // Bilateral filter first (edge-preserving smoothing)
-      const bilateral = new cv.Mat();
-      cv.bilateralFilter(gray, bilateral, 9, 75, 75);
-      
-      adaptiveThresh = new cv.Mat();
-      cv.adaptiveThreshold(
-        bilateral,
-        adaptiveThresh,
-        255,
-        cv.ADAPTIVE_THRESH_GAUSSIAN_C,
-        cv.THRESH_BINARY_INV,
-        7,  // Smaller block size (was 21)
-        2   // Lower C (was 5)
-      );
+    // Find contours
+    const contourVec = new cv.MatVector();
+    const hierarchy = new cv.Mat();
+    cv.findContours(thresh, contourVec, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
-      adaptiveContours = new cv.MatVector();
-      adaptiveHierarchy = new cv.Mat();
-      cv.findContours(adaptiveThresh, adaptiveContours, adaptiveHierarchy, cv.RETR_TREE, cv.CHAIN_APPROX_TC89_L1);
+    // Find contour closest to center
+    const centerX = w / 2;
+    const centerY = h / 2;
+    let bestContour: any = null;
+    let bestDist = Infinity;
 
-      console.log(`[contour] Adaptive threshold found ${adaptiveContours.size()} contours`);
+    for (let i = 0; i < contourVec.size(); i++) {
+      const c = contourVec.get(i);
+      const area = cv.contourArea(c);
+      if (area < 500) continue; // Skip tiny noise
 
-      for (let i = 0; i < adaptiveContours.size(); i++) {
-        if (!isTopLevelContour(i, adaptiveHierarchy)) continue;
-        
-        const contour = adaptiveContours.get(i);
-        const area = cv.contourArea(contour);
+      const moments = cv.moments(c);
+      if (moments.m00 === 0) continue;
 
-        if (area >= imageArea * MIN_CONTOUR_AREA_RATIO && 
-            area <= imageArea * MAX_CONTOUR_AREA_RATIO) {
-          const smoothed = smoothContour(cv, contour, 0.001);
-          
-          const points: Point[] = [];
-          for (let j = 0; j < smoothed.rows; j++) {
-            points.push({
-              x: Math.round(smoothed.data32S[j * 2] * scale),
-              y: Math.round(smoothed.data32S[j * 2 + 1] * scale)
-            });
-          }
-          safeDelete(smoothed);
+      const cx = moments.m10 / moments.m00;
+      const cy = moments.m01 / moments.m00;
+      const dist = Math.sqrt(Math.pow(cx - centerX, 2) + Math.pow(cy - centerY, 2));
 
-          if (points.length >= 3) {
-            allContours.push({ contour: points, area: area * scale * scale, method: 'adaptive' });
-          }
-        }
-      }
-      safeDelete(bilateral);
-    } finally {
-      safeDelete(adaptiveThresh, adaptiveContours, adaptiveHierarchy);
-    }
-
-    // Method 3: Binary threshold with OTSU (fallback)
-    console.log('[contour] Running binary threshold (OTSU)...');
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let binaryThresh: any, binaryContours: any, binaryHierarchy: any;
-    try {
-      const blurred = new cv.Mat();
-      cv.GaussianBlur(gray, blurred, new cv.Size(5, 5), 0);
-      
-      binaryThresh = new cv.Mat();
-      cv.threshold(blurred, binaryThresh, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
-
-      binaryContours = new cv.MatVector();
-      binaryHierarchy = new cv.Mat();
-      cv.findContours(binaryThresh, binaryContours, binaryHierarchy, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE);
-
-      console.log(`[contour] Binary threshold found ${binaryContours.size()} contours`);
-
-      for (let i = 0; i < binaryContours.size(); i++) {
-        if (!isTopLevelContour(i, binaryHierarchy)) continue;
-        
-        const contour = binaryContours.get(i);
-        const area = cv.contourArea(contour);
-
-        if (area >= imageArea * MIN_CONTOUR_AREA_RATIO && 
-            area <= imageArea * MAX_CONTOUR_AREA_RATIO) {
-          const smoothed = smoothContourAdvanced(cv, contour, canvas.width, canvas.height);
-          
-          let points: Point[] = [];
-          for (let j = 0; j < smoothed.rows; j++) {
-            points.push({
-              x: Math.round(smoothed.data32S[j * 2] * scale),
-              y: Math.round(smoothed.data32S[j * 2 + 1] * scale)
-            });
-          }
-          safeDelete(smoothed);
-          
-          // Clean up duplicate and collinear points
-          points = cleanContourPoints(points);
-
-          if (points.length >= 3) {
-            allContours.push({ contour: points, area: area * scale * scale, method: 'binary' });
-          }
-        }
-      }
-      safeDelete(blurred);
-    } finally {
-      safeDelete(binaryThresh, binaryContours, binaryHierarchy);
-    }
-
-    console.log(`[contour] Total contours before dedupe: ${allContours.length}`);
-
-    // Deduplicate: merge overlapping contours (IoU > 0.3) and filter noise
-    const uniqueContours: typeof allContours = [];
-    for (const candidate of allContours) {
-      // Skip contours with too few points (noise)
-      if (candidate.contour.length < MIN_CONTOUR_POINTS) {
-        console.log(`[contour] Skipping small contour with ${candidate.contour.length} points`);
-        continue;
-      }
-      
-      let isDuplicate = false;
-      for (const existing of uniqueContours) {
-        const iou = calculateBoundingBoxIoU(candidate.contour, existing.contour);
-        // Merge if significant overlap
-        if (iou > 0.3) {
-          isDuplicate = true;
-          // Keep the larger one (more likely to be the main object)
-          if (candidate.area > existing.area) {
-            existing.contour = candidate.contour;
-            existing.area = candidate.area;
-            existing.method = candidate.method;
-          }
-          break;
-        }
-      }
-      if (!isDuplicate) {
-        uniqueContours.push(candidate);
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestContour = c;
       }
     }
 
-    console.log(`[contour] Total contours after dedupe: ${uniqueContours.length}`);
+    if (!bestContour) return null;
 
-    // Classify as paper or object
-    const candidates: ContourCandidate[] = uniqueContours.map(c => {
-      const isPaper = c.area > imageArea * scale * scale * PAPER_AREA_THRESHOLD;
-      return {
-        points: c.contour,
-        area: c.area,
-        isPaper,
-        detectionMethod: c.method as 'canny' | 'adaptive' | 'binary'
-      };
-    });
+    // Smooth
+    const perimeter = cv.arcLength(bestContour, true);
+    const epsilon = 0.01 * perimeter;
+    const smoothed = new cv.Mat();
+    cv.approxPolyDP(bestContour, smoothed, epsilon, true);
 
-    // Sort by area descending
-    candidates.sort((a, b) => b.area - a.area);
+    // Convert points (add ROI offset)
+    const points: Point[] = [];
+    for (let j = 0; j < smoothed.rows; j++) {
+      points.push({
+        x: Math.round((smoothed.data32S[j * 2] + x) * scale),
+        y: Math.round((smoothed.data32S[j * 2 + 1] + y) * scale)
+      });
+    }
 
-    console.log(`[contour] Final candidates: ${candidates.length} (papers: ${candidates.filter(c => c.isPaper).length})`);
-    
-    return candidates;
+    safeDelete(roi, filtered, thresh, contourVec, hierarchy, smoothed);
+
+    if (points.length < 6) return null;
+
+    // Calculate area
+    let area = 0;
+    for (let i = 0; i < points.length; i++) {
+      const j = (i + 1) % points.length;
+      area += points[i].x * points[j].y - points[j].x * points[i].y;
+    }
+    area = Math.abs(area) / 2;
+
+    return { points, area };
+
   } catch (err) {
-    console.error('[contour] ERROR in detectAllContours:', err);
-    throw err;
+    console.error('Click detection error:', err);
+    return null;
   } finally {
     safeDelete(src, gray);
   }
 }
 
-// Detect holes within a contour region
-// This is a simplified approach - looks for dark regions inside the object
-export async function detectHoles(
-  imageElement: HTMLImageElement,
-  outerContour: Point[]
-): Promise<Point[][]> {
-  console.log('[contour] detectHoles starting...');
-  await loadOpenCV();
-  const cv = getCv();
+// Simplify contour by removing redundant points
+export function simplifyContour(points: Point[], tolerance: number): Point[] {
+  if (points.length <= 3) return points;
 
-  const canvas = imageToCanvas(imageElement);
-  const scale = 1 / getImageScale(imageElement);
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let src: any, gray: any, mask: any;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const holes: Point[][] = [];
-
-  try {
-    src = cv.imread(canvas);
-    gray = new cv.Mat();
-    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-
-    // Create mask from outer contour
-    mask = new cv.Mat.zeros(gray.rows, gray.cols, cv.CV_8UC1);
-    const contourMat = cv.matFromArray(outerContour.length, 1, cv.CV_32SC2, 
-      outerContour.flatMap(p => [p.x / scale, p.y / scale]));
-    
-    // Fill the outer contour
-    const fillColor = new cv.Scalar(255);
-    cv.drawContours(mask, new cv.MatVector().push_back(contourMat), 0, fillColor, -1);
-
-    // Mask the grayscale image
-    const maskedGray = new cv.Mat();
-    cv.bitwise_and(gray, mask, maskedGray);
-
-    // Find contours within the masked region using adaptive threshold
-    const thresh = new cv.Mat();
-    cv.adaptiveThreshold(maskedGray, thresh, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 11, 2);
-
-    // Find contours
-    const contours = new cv.MatVector();
-    const hierarchy = new cv.Mat();
-    cv.findContours(thresh, contours, hierarchy, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE);
-
-    // Filter contours that are likely holes (inside the object, reasonable size)
-    const outerArea = cv.contourArea(contourMat);
-    const minHoleArea = outerArea * 0.01; // At least 1% of object
-    const maxHoleArea = outerArea * 0.5;  // At most 50% of object
-
-    for (let i = 0; i < contours.size(); i++) {
-      const c = contours.get(i);
-      const area = cv.contourArea(c);
-      
-      if (area >= minHoleArea && area <= maxHoleArea) {
-        // Simplify the hole contour
-        const perimeter = cv.arcLength(c, true);
-        const epsilon = 0.01 * perimeter;
-        const approx = new cv.Mat();
-        cv.approxPolyDP(c, approx, epsilon, true);
-        
-        if (approx.rows >= 3) {
-          const points: Point[] = [];
-          for (let j = 0; j < approx.rows; j++) {
-            points.push({
-              x: Math.round(approx.data32S[j * 2] * scale),
-              y: Math.round(approx.data32S[j * 2 + 1] * scale)
-            });
-          }
-          holes.push(points);
-        }
-        safeDelete(approx);
-      }
-    }
-
-    safeDelete(contourMat, maskedGray, thresh, contours, hierarchy);
-
-    console.log(`[contour] Found ${holes.length} holes`);
-    return holes;
-
-  } catch (err) {
-    console.error('[contour] ERROR in detectHoles:', err);
-    return [];
-  } finally {
-    safeDelete(src, gray, mask);
-  }
-}
-
-// Legacy detectContour function
-export async function detectContour(
-  imageElement: HTMLImageElement | HTMLCanvasElement,
-  params?: ProcessingParams
-): Promise<Contour | null> {
-  if (imageElement instanceof HTMLCanvasElement) {
-    const dataUrl = imageElement.toDataURL();
-    const img = new Image();
-    img.src = dataUrl;
-    await new Promise<void>((resolve, reject) => {
-      img.onload = () => resolve();
-      img.onerror = () => reject(new Error('Failed to load canvas as image'));
-    });
-    imageElement = img;
-  }
-
-  const candidates = await detectAllContours(imageElement);
+  // Douglas-Peucker-like simplification
+  const simplified: Point[] = [points[0]];
   
-  const objectCandidates = candidates.filter(c => !c.isPaper);
-  
-  if (objectCandidates.length > 0) {
-    const best = objectCandidates[0];
-    return { points: best.points, area: best.area };
-  }
-  
-  if (candidates.length > 0) {
-    const best = candidates[0];
-    return { points: best.points, area: best.area };
-  }
-  
-  return null;
-}
-
-// Draw all contours on canvas
-export function drawContoursOnCanvas(
-  canvas: HTMLCanvasElement,
-  contours: ContourCandidate[],
-  imageElement: HTMLImageElement | HTMLCanvasElement,
-  selectedIndex: number = -1,
-  displayScale: number = 1
-): void {
-  const ctx = canvas.getContext('2d');
-  if (!ctx) { console.error('[contour] No canvas context'); return; }
-
-  const origW = (imageElement as HTMLImageElement).naturalWidth || imageElement.width;
-  const origH = (imageElement as HTMLImageElement).naturalHeight || imageElement.height;
-  const maxDisplay = 1200;
-  let calculatedScale = 1;
-  if (origW > maxDisplay || origH > maxDisplay) {
-    calculatedScale = maxDisplay / Math.max(origW, origH);
-  }
-  
-  const w = Math.round(origW * calculatedScale);
-  const h = Math.round(origH * calculatedScale);
-  
-  canvas.width = w;
-  canvas.height = h;
-
-  try {
-    ctx.drawImage(imageElement, 0, 0, w, h);
-  } catch (e) {
-    console.error('[contour] drawImage failed:', e);
-    return;
-  }
-
-  contours.forEach((contour, index) => {
-    const pts = contour.points.map(p => ({ 
-      x: p.x * calculatedScale, 
-      y: p.y * calculatedScale 
-    }));
-    
-    const isSelected = index === selectedIndex;
-    const isPaper = contour.isPaper;
-    
-    if (isPaper) {
-      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-      pts.forEach(p => {
-        minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
-        maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y);
-      });
-      
-      ctx.fillStyle = isSelected ? 'rgba(34, 197, 94, 0.25)' : 'rgba(34, 197, 94, 0.1)';
-      ctx.fillRect(minX, minY, maxX - minX, maxY - minY);
-      
-      ctx.strokeStyle = isSelected ? '#22c55e' : '#4ade80';
-      ctx.lineWidth = isSelected ? 3 : 2;
-      ctx.setLineDash([8, 4]);
-      ctx.strokeRect(minX, minY, maxX - minX, maxY - minY);
-      ctx.setLineDash([]);
-    } else {
-      ctx.beginPath();
-      ctx.moveTo(pts[0].x, pts[0].y);
-      for (let i = 1; i < pts.length; i++) {
-        ctx.lineTo(pts[i].x, pts[i].y);
-      }
-      ctx.closePath();
-      
-      if (isSelected) {
-        ctx.fillStyle = 'rgba(6, 182, 212, 0.2)';
-        ctx.fill();
-        ctx.strokeStyle = '#06b6d4';
-        ctx.lineWidth = 4;
-      } else {
-        ctx.strokeStyle = '#60a5fa';
-        ctx.lineWidth = 2;
-      }
-      ctx.stroke();
-    }
-  });
-}
-
-// Offset a contour along normals
-export function offsetContour(points: Point[], offsetPx: number): Point[] {
-  if (points.length < 3 || offsetPx === 0) return points;
-
-  const n = points.length;
-  const result: Point[] = [];
-
-  for (let i = 0; i < n; i++) {
-    const prev = points[i === 0 ? n - 1 : i - 1];
+  for (let i = 1; i < points.length; i++) {
+    const last = simplified[simplified.length - 1];
     const curr = points[i];
-    const next = points[i === n - 1 ? 0 : i + 1];
-
-    const dx1 = curr.x - prev.x, dy1 = curr.y - prev.y;
-    const len1 = Math.sqrt(dx1 * dx1 + dy1 * dy1) || 1;
-    const nx1 = -dy1 / len1, ny1 = dx1 / len1;
-
-    const dx2 = next.x - curr.x, dy2 = next.y - curr.y;
-    const len2 = Math.sqrt(dx2 * dx2 + dy2 * dy2) || 1;
-    const nx2 = -dy2 / len2, ny2 = dx2 / len2;
-
-    let nx = (nx1 + nx2) / 2;
-    let ny = (ny1 + ny2) / 2;
-    const normalLen = Math.sqrt(nx * nx + ny * ny) || 1;
-    nx /= normalLen;
-    ny /= normalLen;
-
-    result.push({
-      x: Math.round(curr.x + nx * offsetPx),
-      y: Math.round(curr.y + ny * offsetPx),
-    });
+    const dist = Math.sqrt(Math.pow(curr.x - last.x, 2) + Math.pow(curr.y - last.y, 2));
+    
+    if (dist > tolerance) {
+      simplified.push(curr);
+    }
   }
 
+  // Ensure closed loop
+  if (simplified.length > 2 && 
+      (simplified[0].x !== simplified[simplified.length - 1].x ||
+       simplified[0].y !== simplified[simplified.length - 1].y)) {
+    simplified.push(simplified[0]);
+  }
+
+  return simplified.length >= 3 ? simplified : points;
+}
+
+// Offset contour outward (positive) or inward (negative)
+export function offsetContour(points: Point[], offset: number): Point[] {
+  // Simple implementation: move each point along normal
+  const result: Point[] = [];
+  
+  for (let i = 0; i < points.length; i++) {
+    const prev = points[(i - 1 + points.length) % points.length];
+    const curr = points[i];
+    const next = points[(i + 1) % points.length];
+    
+    // Calculate normal
+    const dx1 = curr.x - prev.x;
+    const dy1 = curr.y - prev.y;
+    const dx2 = next.x - curr.x;
+    const dy2 = next.y - curr.y;
+    
+    const len1 = Math.sqrt(dx1 * dx1 + dy1 * dy1);
+    const len2 = Math.sqrt(dx2 * dx2 + dy2 * dy2);
+    
+    if (len1 === 0 || len2 === 0) {
+      result.push(curr);
+      continue;
+    }
+    
+    // Average normal
+    const nx = -(dy1 / len1 + dy2 / len2) / 2;
+    const ny = (dx1 / len1 + dx2 / len2) / 2;
+    const nlen = Math.sqrt(nx * nx + ny * ny);
+    
+    if (nlen === 0) {
+      result.push(curr);
+      continue;
+    }
+    
+    result.push({
+      x: Math.round(curr.x + (nx / nlen) * offset),
+      y: Math.round(curr.y + (ny / nlen) * offset)
+    });
+  }
+  
   return result;
+}
+
+// Default processing params
+export function getDefaultProcessingParams() {
+  return {
+    blurKernel: 21,
+    cannyLow: 30,
+    cannyHigh: 100,
+    epsilon: 0.005
+  };
+}
+
+// Paper detection (simplified)
+export async function detectPaper(
+  imageElement: HTMLImageElement
+): Promise<{ corners: Point[]; width: number; height: number } | null> {
+  const contours = await detectContours(imageElement);
+  const paper = contours.find(c => c.isPaper);
+  
+  if (!paper) return null;
+  
+  // Find bounding box corners
+  const xs = paper.points.map(p => p.x);
+  const ys = paper.points.map(p => p.y);
+  
+  return {
+    corners: [
+      { x: Math.min(...xs), y: Math.min(...ys) },
+      { x: Math.max(...xs), y: Math.min(...ys) },
+      { x: Math.max(...xs), y: Math.max(...ys) },
+      { x: Math.min(...xs), y: Math.max(...ys) }
+    ],
+    width: Math.max(...xs) - Math.min(...xs),
+    height: Math.max(...ys) - Math.min(...ys)
+  };
 }
 
 // Perspective warp
 export async function warpPerspective(
   imageElement: HTMLImageElement,
-  srcCorners: Point[],
+  corners: Point[],
   destWidth: number,
   destHeight: number
 ): Promise<HTMLCanvasElement> {
   await loadOpenCV();
   const cv = getCv();
 
-  const sorted = sortCorners(srcCorners);
-
-  const srcMat = cv.matFromArray(4, 1, cv.CV_32FC2, [
-    sorted[0].x, sorted[0].y,
-    sorted[1].x, sorted[1].y,
-    sorted[2].x, sorted[2].y,
-    sorted[3].x, sorted[3].y,
-  ]);
-
-  const dstMat = cv.matFromArray(4, 1, cv.CV_32FC2, [
-    0, 0,
-    destWidth, 0,
-    destWidth, destHeight,
-    0, destHeight,
-  ]);
-
-  const transformMatrix = cv.getPerspectiveTransform(srcMat, dstMat);
-  const src = cv.imread(imageElement);
-  const warped = new cv.Mat();
-
-  cv.warpPerspective(src, warped, transformMatrix, { width: destWidth, height: destHeight });
-
-  const canvas = document.createElement('canvas');
-  canvas.width = destWidth;
-  canvas.height = destHeight;
-  cv.imshow(canvas, warped);
-
-  safeDelete(src, warped, srcMat, dstMat, transformMatrix);
-
-  return canvas;
-}
-
-// Sort corners: TL, TR, BR, BL
-function sortCorners(corners: Point[]): Point[] {
-  const sorted = [...corners].sort((a, b) => {
-    if (Math.abs(a.y - b.y) > 10) return a.y - b.y;
-    return a.x - b.x;
-  });
-
-  const top = sorted.slice(0, 2).sort((a, b) => a.x - b.x);
-  const bottom = sorted.slice(2).sort((a, b) => a.x - b.x);
-
-  return [top[0], top[1], bottom[1], bottom[0]];
-}
-
-// Simplify contour using RDP
-export function simplifyContour(points: Point[], tolerance: number): Point[] {
-  if (points.length <= 3) return points;
-
-  function rdp(pts: Point[], eps: number): Point[] {
-    if (pts.length <= 2) return pts;
-    const first = pts[0], last = pts[pts.length - 1];
-    let maxDist = 0, maxIdx = 0;
-    for (let i = 1; i < pts.length - 1; i++) {
-      const d = pointToLineDistance(pts[i], first, last);
-      if (d > maxDist) { maxDist = d; maxIdx = i; }
-    }
-    if (maxDist > eps) {
-      const left = rdp(pts.slice(0, maxIdx + 1), eps);
-      const right = rdp(pts.slice(maxIdx), eps);
-      return left.slice(0, -1).concat(right);
-    }
-    return [first, last];
+  const canvas = imageToCanvas(imageElement);
+  
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let src: any, dst: any, M: any;
+  
+  try {
+    src = cv.imread(canvas);
+    dst = new cv.Mat();
+    
+    const srcTri = cv.matFromArray(4, 1, cv.CV_32FC2, [
+      corners[0].x, corners[0].y,
+      corners[1].x, corners[1].y,
+      corners[2].x, corners[2].y,
+      corners[3].x, corners[3].y
+    ]);
+    
+    const dstTri = cv.matFromArray(4, 1, cv.CV_32FC2, [
+      0, 0,
+      destWidth, 0,
+      destWidth, destHeight,
+      0, destHeight
+    ]);
+    
+    M = cv.getPerspectiveTransform(srcTri, dstTri);
+    cv.warpPerspective(src, dst, M, new cv.Size(destWidth, destHeight));
+    
+    const result = document.createElement('canvas');
+    result.width = destWidth;
+    result.height = destHeight;
+    cv.imshow(result, dst);
+    
+    safeDelete(srcTri, dstTri, M);
+    
+    return result;
+  } finally {
+    safeDelete(src, dst, M);
   }
-
-  function pointToLineDistance(p: Point, a: Point, b: Point): number {
-    const dx = b.x - a.x, dy = b.y - a.y;
-    const len2 = dx * dx + dy * dy;
-    if (len2 === 0) return Math.sqrt((p.x - a.x) ** 2 + (p.y - a.y) ** 2);
-    const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2));
-    const projX = a.x + t * dx, projY = a.y + t * dy;
-    return Math.sqrt((p.x - projX) ** 2 + (p.y - projY) ** 2);
-  }
-
-  const closed = [...points, points[0]];
-  const simplified = rdp(closed, tolerance);
-  if (simplified.length > 1 &&
-      simplified[0].x === simplified[simplified.length - 1].x &&
-      simplified[0].y === simplified[simplified.length - 1].y) {
-    simplified.pop();
-  }
-  return simplified.length >= 3 ? simplified : points;
-}
-
-export function getDefaultProcessingParams(): ProcessingParams {
-  return {
-    blurKernel: 15,    // outline-app style
-    cannyLow: 100,     // outline-app style
-    cannyHigh: 200,    // outline-app style
-    epsilon: 0.002     // 0.2% of perimeter
-  };
 }
