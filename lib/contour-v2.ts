@@ -33,26 +33,20 @@ export async function detectContours(
     cv.cvtColor(bilateral, gray, cv.COLOR_RGB2GRAY);
     bilateral.delete();
 
-    // Step 4: Binary threshold (outline-app style - handles both dark/light objects)
-    const thresh = new cv.Mat();
-    const inverseThresh = new cv.Mat();
+    // Step 4: Try Canny edge detection first (better for textured objects)
+    const edges = new cv.Mat();
+    cv.Canny(gray, edges, 50, 150);
     
-    // Regular threshold (dark objects on light bg)
-    cv.threshold(gray, thresh, 130, 255, cv.THRESH_BINARY);
-    // Inverse threshold (light objects on dark bg)
-    cv.threshold(gray, inverseThresh, 130, 255, cv.THRESH_BINARY_INV);
-    
-    // Combine both
-    const combined = new cv.Mat();
-    cv.bitwise_or(thresh, inverseThresh, combined);
-    thresh.delete();
-    inverseThresh.delete();
+    // Dilate to connect edges
+    const dilated = new cv.Mat();
+    const kernel = cv.Mat.ones(7, 7, cv.CV_8U);
+    cv.dilate(edges, dilated, kernel);
+    edges.delete();
 
     // Step 5: Close contours (dilate then erode)
-    const kernel = cv.Mat.ones(5, 5, cv.CV_8U);
     const closed = new cv.Mat();
-    cv.morphologyEx(combined, closed, cv.MORPH_CLOSE, kernel);
-    combined.delete();
+    cv.morphologyEx(dilated, closed, cv.MORPH_CLOSE, kernel);
+    dilated.delete();
     kernel.delete();
 
     // Step 6: Find contours
@@ -63,6 +57,7 @@ export async function detectContours(
 
     // Step 7: Filter and convert
     const results: Contour[] = [];
+    console.log(`[contour-v2] Found ${contours.size()} raw contours`);
     
     for (let i = 0; i < contours.size(); i++) {
       const c = contours.get(i);
@@ -70,7 +65,10 @@ export async function detectContours(
       const areaRatio = area / imageArea;
 
       // Skip if too small or too large
-      if (areaRatio < 0.005 || areaRatio > 0.95) continue;
+      if (areaRatio < 0.005 || areaRatio > 0.95) {
+        console.log(`[contour-v2] Skipping contour ${i}: area ratio ${areaRatio.toFixed(4)}`);
+        continue;
+      }
 
       // Smooth with 0.2% of perimeter (outline-app style)
       const perimeter = cv.arcLength(c, true);
@@ -93,6 +91,9 @@ export async function detectContours(
           points,
           area: area * scale * scale
         });
+        console.log(`[contour-v2] Added contour ${i}: ${points.length} points, area ${(area * scale * scale).toFixed(0)}`);
+      } else {
+        console.log(`[contour-v2] Skipping contour ${i}: only ${points.length} points`);
       }
     }
 
