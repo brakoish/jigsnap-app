@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Loader2, RefreshCw, ZoomIn, ZoomOut, Maximize, Undo2, Redo2, Download, Settings2 } from 'lucide-react';
-import { detectContours, detectAtPoint } from '@/lib/contour-v2';
+import { detectContours, detectAtPoint } from '@/lib/contour';
 import type { Contour, Point } from '@/lib/types';
 
 interface ContourDetectorProps {
