@@ -37,7 +37,7 @@ export default function Home() {
     setCurrentStep(1);
   }, [imageUrl]);
 
-  const handleContourDetected = useCallback((detectedContour: Contour, imgElement: HTMLImageElement) => {
+  const handleContourDetected = useCallback((detectedContour: Contour) => {
     setContour(detectedContour);
     
     // Calculate bounds
