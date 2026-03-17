@@ -37,6 +37,8 @@ export default function ContourDetector({ imageUrl, onContourDetected, onA4Detec
   const [showSettings, setShowSettings] = useState(false);
   const [blurAmount, setBlurAmount] = useState(15);
   const [threshold, setThreshold] = useState(130);
+  const [offsetMm, setOffsetMm] = useState(0.5);
+  const [showOffset, setShowOffset] = useState(false);
   
   // Load image
   useEffect(() => {
@@ -135,12 +137,13 @@ export default function ContourDetector({ imageUrl, onContourDetected, onA4Detec
         onContourDetected(obj);
       }
     } catch (err) {
-      setError('Detection failed');
+      console.error('Detection error:', err);
+      setError('Detection failed: ' + (err instanceof Error ? err.message : String(err)));
     } finally {
       setIsDetecting(false);
     }
   };
-  
+
   // Click to detect at specific point
   const handleCanvasClick = async (e: React.MouseEvent) => {
     if (!canvasRef.current || !imageRef.current || isDragging) return;
@@ -181,9 +184,26 @@ export default function ContourDetector({ imageUrl, onContourDetected, onA4Detec
   
   const handleMouseUp = () => setIsDragging(false);
   
-  // Zoom
-  const handleZoomIn = () => setZoom(z => Math.min(z * 1.5, 8));
-  const handleZoomOut = () => setZoom(z => Math.max(z / 1.5, 0.5));
+  // Zoom centered on canvas
+  const zoomAt = (newZoom: number, centerX?: number, centerY?: number) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    
+    // Use center of canvas if not specified
+    const cx = centerX ?? canvas.width / 2;
+    const cy = centerY ?? canvas.height / 2;
+    
+    // Calculate new pan to keep center point stable
+    const scale = newZoom / zoom;
+    const newPanX = cx - (cx - pan.x) * scale;
+    const newPanY = cy - (cy - pan.y) * scale;
+    
+    setZoom(newZoom);
+    setPan({ x: newPanX, y: newPanY });
+  };
+  
+  const handleZoomIn = () => zoomAt(Math.min(zoom * 1.5, 8));
+  const handleZoomOut = () => zoomAt(Math.max(zoom / 1.5, 0.5));
   const handleResetView = () => { setZoom(1); setPan({ x: 0, y: 0 }); };
   
   // History
@@ -211,23 +231,37 @@ export default function ContourDetector({ imageUrl, onContourDetected, onA4Detec
     }
   };
   
-  // Smooth contour
+  // Smooth contour - use Douglas-Peucker-like algorithm
   const handleSmooth = () => {
     if (points.length < 8) return;
-    
-    // Remove points that are too close
-    const minDist = 20;
-    const cleaned: Point[] = [];
-    
-    for (const p of points) {
-      const tooClose = cleaned.some(cp => {
-        const dx = cp.x - p.x;
-        const dy = cp.y - p.y;
-        return Math.sqrt(dx * dx + dy * dy) < minDist;
-      });
-      if (!tooClose) cleaned.push(p);
+
+    // Calculate centroid
+    const centroid = points.reduce((acc, p) => ({ x: acc.x + p.x, y: acc.y + p.y }), { x: 0, y: 0 });
+    centroid.x /= points.length;
+    centroid.y /= points.length;
+
+    // Sort by angle from centroid to maintain shape
+    const sorted = [...points].sort((a, b) => {
+      const angleA = Math.atan2(a.y - centroid.y, a.x - centroid.x);
+      const angleB = Math.atan2(b.y - centroid.y, b.x - centroid.x);
+      return angleA - angleB;
+    });
+
+    // Remove points that are too close together (but keep shape)
+    const minDist = 15;
+    const cleaned: Point[] = [sorted[0]];
+
+    for (let i = 1; i < sorted.length; i++) {
+      const last = cleaned[cleaned.length - 1];
+      const curr = sorted[i];
+      const dist = Math.sqrt(Math.pow(curr.x - last.x, 2) + Math.pow(curr.y - last.y, 2));
+
+      if (dist >= minDist) {
+        cleaned.push(curr);
+      }
     }
-    
+
+    // Ensure we have enough points and close the loop
     if (cleaned.length >= 6) {
       setPoints(cleaned);
       pushHistory(cleaned);
@@ -236,7 +270,28 @@ export default function ContourDetector({ imageUrl, onContourDetected, onA4Detec
       }
     }
   };
-  
+
+  // Apply offset to contour points
+  const applyOffset = (pts: Point[], offset: number): Point[] => {
+    // Calculate centroid
+    const centroid = pts.reduce((acc, p) => ({ x: acc.x + p.x, y: acc.y + p.y }), { x: 0, y: 0 });
+    centroid.x /= pts.length;
+    centroid.y /= pts.length;
+
+    // Move each point outward from centroid
+    return pts.map(p => {
+      const dx = p.x - centroid.x;
+      const dy = p.y - centroid.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist === 0) return p;
+      const scale = (dist + offset) / dist;
+      return {
+        x: Math.round(centroid.x + dx * scale),
+        y: Math.round(centroid.y + dy * scale)
+      };
+    });
+  };
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-96">
@@ -294,6 +349,13 @@ export default function ContourDetector({ imageUrl, onContourDetected, onA4Detec
             Auto-Detect
           </button>
           <button 
+            onClick={() => setShowOffset(s => !s)}
+            className={`p-2 rounded ${showOffset ? 'bg-amber-600' : 'hover:bg-zinc-700'}`}
+            title="Offset"
+          >
+            <span className="text-xs font-bold">+</span>
+          </button>
+          <button 
             onClick={() => setShowSettings(s => !s)}
             className={`p-2 rounded ${showSettings ? 'bg-cyan-600' : 'hover:bg-zinc-700'}`}
           >
@@ -301,6 +363,37 @@ export default function ContourDetector({ imageUrl, onContourDetected, onA4Detec
           </button>
         </div>
       </div>
+      
+      {/* Offset Panel */}
+      {showOffset && (
+        <div className="p-4 bg-zinc-800/50 rounded-lg space-y-4">
+          <div>
+            <label className="text-sm text-zinc-400">Contour Offset (mm)</label>
+            <input 
+              type="range" min="0" max="5" step="0.1" 
+              value={offsetMm}
+              onChange={(e) => {
+                const newOffset = parseFloat(e.target.value);
+                setOffsetMm(newOffset);
+                // Apply offset to current contour
+                if (contour && points.length > 0) {
+                  // Simple offset - expand outward
+                  const offsetPoints = applyOffset(points, newOffset * 10); // Convert mm to pixels (approx)
+                  setPoints(offsetPoints);
+                  onContourDetected({ ...contour, points: offsetPoints });
+                }
+              }}
+              className="w-full accent-amber-500"
+            />
+            <div className="flex justify-between text-xs text-zinc-500">
+              <span>0mm</span>
+              <span>{offsetMm.toFixed(1)}mm</span>
+              <span>5mm</span>
+            </div>
+            <p className="text-xs text-zinc-500 mt-1">Add clearance around the object</p>
+          </div>
+        </div>
+      )}
       
       {/* Settings Panel */}
       {showSettings && (
